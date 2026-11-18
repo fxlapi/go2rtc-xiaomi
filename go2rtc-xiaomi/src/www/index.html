@@ -11,24 +11,30 @@
   --ok:#3fbf6f;--warn:#ffb020;--err:#ff5c5c;--radius:12px;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{min-height:100%}
+html,body{height:100%}
 body{background:var(--bg);color:var(--txt);font:14px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",Roboto,sans-serif}
 button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,select,textarea{font:inherit;color:var(--txt);background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--acc)}
+::placeholder{color:#5a6275}
 
 /* ── 顶栏 ── */
 header{position:sticky;top:0;z-index:20;background:rgba(15,17,21,.92);backdrop-filter:blur(8px);
-  border-bottom:1px solid var(--line);padding:0 18px;display:flex;align-items:center;gap:14px;height:52px;flex-wrap:wrap}
+  border-bottom:1px solid var(--line);padding:0 18px;display:flex;align-items:center;gap:18px;height:52px}
 .brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:15px;white-space:nowrap}
 .brand .dot{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 6px var(--ok)}
 .brand .dot.off{background:var(--err);box-shadow:none}
-nav{display:flex;gap:4px;flex:1;flex-wrap:wrap}
-nav a{padding:7px 14px;border-radius:8px;color:var(--dim);font-size:13.5px;text-decoration:none}
-nav a:hover{color:var(--txt);background:var(--bg2)}
-nav a.on{color:var(--txt);background:var(--card);font-weight:500}
+nav{display:flex;gap:4px;flex:1}
+nav button{padding:7px 14px;border-radius:8px;color:var(--dim);font-size:13.5px}
+nav button:hover{color:var(--txt);background:var(--bg2)}
+nav button.on{color:var(--txt);background:var(--card);font-weight:500}
 .ver{font-size:12px;color:var(--dim);white-space:nowrap}
 
-main{max-width:1600px;margin:0 auto;padding:14px 18px 40px}
-.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+main{max-width:1500px;margin:0 auto;padding:16px 18px 40px}
+.page{display:none}.page.on{display:block}
+
+/* ── 画面页 ── */
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px}
 .chip{display:inline-flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--line);
   border-radius:20px;padding:6px 12px;cursor:pointer;font-size:13px;user-select:none}
 .chip input{accent-color:var(--acc);cursor:pointer;margin:0;padding:0}
@@ -50,38 +56,134 @@ main{max-width:1600px;margin:0 auto;padding:14px 18px 40px}
   color:var(--warn);font-size:13px;text-align:center;padding:12px;background:rgba(0,0,0,.7)}
 .empty{color:var(--dim);font-size:14px;padding:40px;text-align:center}
 @media (max-width:700px){.grid{grid-template-columns:1fr}}
+
+/* ── 流管理 ── */
+.toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+table{width:100%;border-collapse:collapse;background:var(--card);border-radius:var(--radius);overflow:hidden}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:top}
+th{color:var(--dim);font-weight:500;background:var(--bg2)}
+td .src{color:var(--dim);word-break:break-all;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace}
+td .nm{font-weight:500}
+.rowbtn{display:flex;gap:6px}
+.rowbtn button{padding:4px 10px;border-radius:7px;font-size:12.5px;background:var(--bg2);border:1px solid var(--line)}
+.rowbtn button:hover{border-color:var(--acc)}
+.rowbtn button.danger:hover{border-color:var(--err);color:var(--err)}
+.badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11.5px;background:rgba(63,191,111,.15);color:var(--ok)}
+.badge.idle{background:rgba(139,147,167,.15);color:var(--dim)}
+.form{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px;margin-top:16px}
+.form h3{font-size:14px;margin-bottom:12px;color:var(--txt)}
+.form .frow{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.form .frow>label{display:flex;flex-direction:column;gap:5px;font-size:12.5px;color:var(--dim);flex:1;min-width:220px}
+.form .frow input,.form .frow select{width:100%}
+.form .acts{display:flex;gap:8px;align-items:center}
+.btn{background:var(--acc);color:#fff;border-radius:8px;padding:8px 18px;font-size:13.5px}
+.btn:hover{background:var(--acc2)}
+.btn.ghost{background:var(--bg2);border:1px solid var(--line);color:var(--txt)}
+.btn.ghost:hover{border-color:var(--acc)}
+.hint{font-size:12px;color:var(--dim);margin-top:8px}
+
+/* ── 日志 ── */
+.logbox{background:#0a0c10;border:1px solid var(--line);border-radius:var(--radius);padding:12px;
+  font:12px/1.55 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-all;
+  height:calc(100vh - 200px);overflow:auto;color:#b7c0d0}
+.logbox .lv-err{color:var(--err)}.logbox .lv-warn{color:var(--warn)}.logbox .lv-info{color:#9fb6d8}
+
+/* ── 配置 ── */
+.cfgbox{display:flex;flex-direction:column;gap:12px}
+textarea.yaml{width:100%;height:calc(100vh - 240px);resize:vertical;font:13px/1.6 ui-monospace,Menlo,Consolas,monospace;
+  background:#0a0c10;border-color:var(--line);padding:14px;border-radius:var(--radius)}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--card);border:1px solid var(--line);
+  border-radius:10px;padding:10px 18px;font-size:13.5px;box-shadow:0 8px 30px rgba(0,0,0,.5);z-index:99;display:none}
+.toast.err{border-color:var(--err);color:var(--err)}
 </style>
 </head>
 <body>
 <header>
   <div class="brand"><span class="dot" id="hdot"></span>go2rtc</div>
   <nav>
-    <a href="index.html" class="on">画面</a>
-    <a href="streams.html">流列表</a>
-    <a href="add.html">添加</a>
-    <a href="config.html">配置</a>
-    <a href="log.html">日志</a>
-    <a href="net.html">网络</a>
+    <button data-p="live" class="on">画面</button>
+    <button data-p="streams">流管理</button>
+    <button data-p="log">日志</button>
+    <button data-p="cfg">配置</button>
   </nav>
   <div class="ver" id="ver"></div>
 </header>
 <main>
-  <div class="bar" id="chips"></div>
-  <div class="grid" id="grid"></div>
-  <div class="empty" id="gempty" style="display:none">还没有可播放的摄像头。</div>
+  <section class="page on" id="p-live">
+    <div class="bar" id="chips"></div>
+    <div class="grid" id="grid"></div>
+    <div class="empty" id="gempty" style="display:none">还没有勾选摄像头，点上面的名字勾选即可，勾选会记住，下次打开自动播放。</div>
+  </section>
+
+  <section class="page" id="p-streams">
+    <div class="toolbar">
+      <button class="mini" id="refreshStreams">刷新列表</button>
+    </div>
+    <table>
+      <thead><tr><th style="width:180px">名称</th><th>来源</th><th style="width:90px">状态</th><th style="width:190px">操作</th></tr></thead>
+      <tbody id="stbody"><tr><td colspan="4" style="color:var(--dim)">读取中…</td></tr></tbody>
+    </table>
+    <div class="form">
+      <h3 id="formTitle">添加流</h3>
+      <div class="frow">
+        <label>名称<input id="fName" placeholder="例如：zhuwo"></label>
+        <label>来源模板
+          <select id="fTpl">
+            <option value="xiaomi">小米摄像头（xiaomi://）</option>
+            <option value="rtsp">RTSP 摄像头</option>
+            <option value="rtmp">RTMP 推流</option>
+            <option value="file">本地文件</option>
+            <option value="">自定义</option>
+          </select>
+        </label>
+      </div>
+      <div class="frow">
+        <label style="flex:3">来源地址<input id="fSrc" placeholder="xiaomi://用户名:密码@192.168.1.123?did=设备ID&model=型号"></label>
+      </div>
+      <div class="acts">
+        <button class="btn" id="fSave">保存</button>
+        <button class="btn ghost" id="fReset">清空表单</button>
+        <span class="hint" id="fHint"></span>
+      </div>
+      <div class="hint">保存会写入 go2rtc 的配置文件并立即生效；删除同样会从配置中移除。</div>
+    </div>
+  </section>
+
+  <section class="page" id="p-log">
+    <div class="toolbar">
+      <button class="mini" id="logPause">暂停刷新</button>
+      <button class="mini" id="logClear">清空日志</button>
+      <label class="chip" style="padding:4px 10px"><input type="checkbox" id="logErrOnly"><span>只看警告/错误</span></label>
+    </div>
+    <div class="logbox" id="logbox">读取中…</div>
+  </section>
+
+  <section class="page" id="p-cfg">
+    <div class="cfgbox">
+      <div class="toolbar" style="margin:0">
+        <button class="btn" id="cfgSave">保存配置</button>
+        <button class="btn ghost" id="cfgSaveRestart">保存并重启</button>
+        <button class="btn ghost" id="cfgReload">重新读取</button>
+        <span class="hint" id="cfgHint"></span>
+      </div>
+      <textarea class="yaml" id="cfgText" spellcheck="false"></textarea>
+    </div>
+  </section>
 </main>
+<div class="toast" id="toast"></div>
 
 <script>
 "use strict";
-/* go2rtc (xiaomi) 首页 — 打开即播放所有摄像头
- * 播放协议与官方 stream.html 一致：MSE over WebSocket (/api/ws)
- * 顶部按钮切换到原版功能页：流列表 / 添加 / 配置 / 日志 / 网络 */
+/* go2rtc (xiaomi) 整合界面 — 打开即播放
+ * 画面页：MSE over WebSocket 直连 go2rtc /api/ws（与官方 stream.html 同协议）
+ * 流管理：/api/streams 增删改（写入配置文件）
+ * 日志：/api/log 轮询；配置：/api/config 读写 */
 
 const $ = (s, el) => (el || document).querySelector(s);
 const $$ = (s, el) => [...(el || document).querySelectorAll(s)];
 
-const SEL_KEY = "g2home.live.sel";
-const ORDER_KEY = "g2home.live.order";
+const SEL_KEY = "g2panel.live.sel";
+const ORDER_KEY = "g2panel.live.order";
 const CAM_NAMES = {
   houyuan1: "后院 1", houyuan2: "后院 2", diannao: "电脑房", erlou: "二楼",
   ChuFang: "厨房", yilou: "一楼", dianshi: "电视", zhuwo: "主卧",
@@ -102,6 +204,14 @@ const MSE_CODECS = (() => {
 })();
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function toast(msg, isErr) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.className = "toast" + (isErr ? " err" : "");
+  t.style.display = "block";
+  clearTimeout(t._h);
+  t._h = setTimeout(() => { t.style.display = "none"; }, 2600);
+}
 async function api(path, opts) {
   const r = await fetch(path, opts);
   if (r.status === 401) throw new Error("需要登录（浏览器未保存 go2rtc 的账号密码）");
@@ -110,15 +220,20 @@ async function api(path, opts) {
 }
 const jget = async (p) => (await api(p)).json();
 
-function loadSet(k) { try { const v = JSON.parse(localStorage.getItem(k) || "[]"); return new Set(Array.isArray(v) ? v : []); } catch (e) { return new Set(); } }
-function saveSet(k, s) { try { localStorage.setItem(k, JSON.stringify([...s])); } catch (e) {} }
-function loadArr(k) { try { const v = JSON.parse(localStorage.getItem(k) || "[]"); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
-function saveArr(k, a) { try { localStorage.setItem(k, JSON.stringify(a)); } catch (e) {} }
+/* ─────────── 页面切换 ─────────── */
+const pageInit = {};
+$$("nav button").forEach((b) => {
+  b.onclick = () => {
+    $$("nav button").forEach((x) => x.classList.toggle("on", x === b));
+    $$(".page").forEach((p) => p.classList.toggle("on", p.id === "p-" + b.dataset.p));
+    if (pageInit[b.dataset.p]) pageInit[b.dataset.p]();
+  };
+});
 
-/* ─────────── 播放器 ─────────── */
+/* ─────────── 画面页 ─────────── */
 const Live = {
   CAMS: [], SEL: loadSet(SEL_KEY), ORDER: loadArr(ORDER_KEY),
-  PLAYERS: {}, RETRIES: {}, FIRST: !localStorage.getItem(SEL_KEY),
+  PLAYERS: {}, RETRIES: {},
   orderedSel() {
     const out = this.ORDER.filter((n) => this.SEL.has(n));
     for (const n of this.SEL) if (!out.includes(n)) out.push(n);
@@ -129,24 +244,20 @@ const Live = {
     return known.concat(this.CAMS.filter((n) => !known.includes(n)));
   },
 };
+function loadSet(k) { try { const v = JSON.parse(localStorage.getItem(k) || "[]"); return new Set(Array.isArray(v) ? v : []); } catch (e) { return new Set(); } }
+function saveSet(k, s) { try { localStorage.setItem(k, JSON.stringify([...s])); } catch (e) {} }
+function loadArr(k) { try { const v = JSON.parse(localStorage.getItem(k) || "[]"); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
+function saveArr(k, a) { try { localStorage.setItem(k, JSON.stringify(a)); } catch (e) {} }
 
-async function init() {
-  try {
-    const info = await jget("/api");
-    $("#ver").textContent = "v" + (info.version || "").split("+")[0].trim();
-    $("#ver").title = info.config_path || "";
-  } catch (e) { $("#hdot").classList.add("off"); }
+pageInit.live = async () => {
+  if (Live.CAMS.length) return;
   try {
     const d = await jget("/api/streams");
     Live.CAMS = Object.keys(d);
-    if (Live.FIRST) { // 首次打开：全部自动播放
-      Live.CAMS.forEach((n) => Live.SEL.add(n));
-      saveSet(SEL_KEY, Live.SEL);
-    }
     renderChips(); renderGrid();
     for (const n of Live.CAMS) if (Live.SEL.has(n)) play(n);
-  } catch (e) { $("#gempty").textContent = "读取摄像头列表失败：" + e.message; $("#gempty").style.display = ""; }
-}
+  } catch (e) { toast("读取摄像头列表失败：" + e.message, true); }
+};
 
 function renderChips() {
   const bar = $("#chips");
@@ -386,8 +497,161 @@ function stop(name) {
   }
 }
 
+/* ─────────── 流管理 ─────────── */
+const TPL = {
+  xiaomi: (v) => `xiaomi://用户名:密码@摄像头IP?did=设备ID&model=型号`,
+  rtsp:   (v) => `rtsp://用户名:密码@摄像头IP:554/...`,
+  rtmp:   (v) => `rtmp://服务器地址/路径`,
+  file:   (v) => `/media/xxx.mp4`,
+};
+
+pageInit.streams = loadStreams;
+async function loadStreams() {
+  const tb = $("#stbody");
+  try {
+    const d = await jget("/api/streams");
+    const names = Object.keys(d);
+    if (!names.length) { tb.innerHTML = `<tr><td colspan="4" style="color:var(--dim)">还没有配置任何流，用下面的表单添加。</td></tr>`; return; }
+    tb.innerHTML = "";
+    for (const n of names) {
+      const st = d[n] || {};
+      const src = (st.producers || []).map((p) => p.url || p.name || "").filter(Boolean).join("<br>") || "—";
+      const cons = (st.consumers || []).length;
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><span class="nm">${esc(camName(n))}</span><div style="font-size:11.5px;color:var(--dim)">${esc(n)}</div></td>
+        <td><span class="src">${esc(src)}</span></td>
+        <td>${cons > 0 ? `<span class="badge">播放中 ×${cons}</span>` : `<span class="badge idle">空闲</span>`}</td>
+        <td><div class="rowbtn">
+          <button data-act="preview">预览</button>
+          <button data-act="edit">编辑</button>
+          <button data-act="del" class="danger">删除</button>
+        </div></td>`;
+      tr.querySelector('[data-act="preview"]').onclick = () => {
+        Live.SEL.add(n); saveSet(SEL_KEY, Live.SEL);
+        $$("nav button").find((b) => b.dataset.p === "live").click();
+        renderChips(); renderGrid(); play(n);
+      };
+      tr.querySelector('[data-act="edit"]').onclick = () => {
+        $("#formTitle").textContent = "编辑流：" + camName(n);
+        $("#fName").value = n;
+        $("#fSrc").value = (st.producers || []).map((p) => p.url || "").find(Boolean) || "";
+        $("#fTpl").value = "";
+        $("#fName").focus();
+        window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+      };
+      tr.querySelector('[data-act="del"]').onclick = async () => {
+        if (!confirm(`确定删除「${camName(n)}」吗？会从配置文件中移除。`)) return;
+        try {
+          await api("/api/streams?src=" + encodeURIComponent(n), { method: "DELETE" });
+          toast("已删除 " + camName(n));
+          Live.SEL.delete(n); saveSet(SEL_KEY, Live.SEL); stop(n);
+          loadStreams();
+        } catch (e) { toast("删除失败：" + e.message, true); }
+      };
+      tb.appendChild(tr);
+    }
+  } catch (e) { tb.innerHTML = `<tr><td colspan="4" style="color:var(--err)">读取失败：${e.message}</td></tr>`; }
+}
+$("#refreshStreams").onclick = loadStreams;
+
+$("#fTpl").onchange = () => {
+  const v = $("#fTpl").value;
+  if (v && TPL[v]) $("#fSrc").placeholder = TPL[v]();
+};
+$("#fReset").onclick = () => {
+  $("#formTitle").textContent = "添加流";
+  $("#fName").value = ""; $("#fSrc").value = ""; $("#fTpl").value = "xiaomi";
+};
+$("#fSave").onclick = async () => {
+  const name = $("#fName").value.trim();
+  const src = $("#fSrc").value.trim();
+  if (!name || !src) { toast("名称和来源都要填", true); return; }
+  try {
+    await api(`/api/streams?name=${encodeURIComponent(name)}&src=${encodeURIComponent(src)}`, { method: "PUT" });
+    toast("已保存 " + camName(name));
+    $("#fReset").click();
+    loadStreams();
+  } catch (e) { toast("保存失败：" + e.message, true); }
+};
+
+/* ─────────── 日志 ─────────── */
+const Log = { paused: false, timer: null, errOnly: false, last: "" };
+pageInit.log = () => {
+  if (Log.timer) return;
+  fetchLog();
+  Log.timer = setInterval(() => { if (!Log.paused) fetchLog(); }, 3000);
+  $("#logPause").onclick = () => {
+    Log.paused = !Log.paused;
+    $("#logPause").textContent = Log.paused ? "恢复刷新" : "暂停刷新";
+  };
+  $("#logClear").onclick = async () => {
+    try { await api("/api/log", { method: "DELETE" }); fetchLog(); } catch (e) { toast("清空失败：" + e.message, true); }
+  };
+  $("#logErrOnly").onchange = (e) => { Log.errOnly = e.target.checked; renderLog(Log.last); };
+};
+async function fetchLog() {
+  try {
+    const txt = await (await api("/api/log")).text();
+    Log.last = txt;
+    renderLog(txt);
+  } catch (e) { $("#logbox").textContent = "读取失败：" + e.message; }
+}
+function renderLog(txt) {
+  const box = $("#logbox");
+  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+  const lines = txt.split("\n").filter(Boolean);
+  const shown = Log.errOnly
+    ? lines.filter((l) => { try { const j = JSON.parse(l); return j.level === "error" || j.level === "warn"; } catch (e) { return true; } })
+    : lines;
+  box.innerHTML = shown.map((l) => {
+    try {
+      const j = JSON.parse(l);
+      const cls = j.level === "error" ? "lv-err" : j.level === "warn" ? "lv-warn" : "lv-info";
+      const t = j.time ? new Date(j.time).toLocaleTimeString("zh-CN", { hour12: false }) : "";
+      return `<span class="${cls}">${esc(`${t} [${j.level}] ${j.message || ""}${j.error ? " " + j.error : ""}`)}</span>`;
+    } catch (e) { return `<span>${esc(l)}</span>`; }
+  }).join("\n");
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+/* ─────────── 配置 ─────────── */
+pageInit.cfg = loadConfig;
+async function loadConfig() {
+  try {
+    $("#cfgText").value = await (await api("/api/config")).text();
+    $("#cfgHint").textContent = "";
+  } catch (e) { toast("读取配置失败：" + e.message, true); }
+}
+async function saveConfig() {
+  const body = $("#cfgText").value;
+  try {
+    await api("/api/config", { method: "POST", body, headers: { "Content-Type": "application/yaml" } });
+    return true;
+  } catch (e) { toast("保存失败：" + e.message, true); return false; }
+}
+$("#cfgSave").onclick = async () => {
+  if (!confirm("确定保存配置吗？保存后立即生效（部分改动需重启）。")) return;
+  if (await saveConfig()) toast("配置已保存");
+};
+$("#cfgSaveRestart").onclick = async () => {
+  if (!confirm("保存并重启 go2rtc？重启期间画面会中断几秒。")) return;
+  if (!(await saveConfig())) return;
+  try { await api("/api/restart", { method: "POST" }); toast("已保存，go2rtc 重启中…"); }
+  catch (e) { toast("已保存；重启请求失败：" + e.message, true); }
+};
+$("#cfgReload").onclick = loadConfig;
+
+/* ─────────── 启动 ─────────── */
+(async () => {
+  try {
+    const info = await jget("/api");
+    $("#ver").textContent = "v" + (info.version || "").split("+")[0].trim();
+    $("#ver").title = info.config_path || "";
+  } catch (e) { $("#hdot").classList.add("off"); }
+  pageInit.live();
+})();
 window.addEventListener("beforeunload", () => { Object.keys(Live.PLAYERS).forEach(stop); });
-init();
 </script>
 </body>
 </html>

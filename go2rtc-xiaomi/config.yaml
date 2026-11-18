@@ -6,7 +6,7 @@ name: go2rtc (xiaomi)
 description: Patched go2rtc for Xiaomi cameras - pop buffer fix + CW501D dual-lens single connection
 url: https://github.com/fxlapi/go2rtc-xiaomi
 arch: [ amd64 ]
-version: 1.9.15-p3
+version: 1.9.15-p4
 slug: go2rtc_xiaomi
 init: false
 startup: system

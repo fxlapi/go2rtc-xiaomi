@@ -44,8 +44,7 @@ RUN if [ "${TARGETARCH}" = "amd64" ]; then apk add --no-cache libva-intel-driver
 
 COPY --from=build /build/go2rtc /usr/local/bin/
 
-# 内置监控台面板（go2rtc 启动时自动从 /app/panel 提供 /panel/ 页面）
-COPY panel/ /app/panel/
+# 整合界面直接内置于 go2rtc 二进制（src/www/），无需额外面板文件
 
 EXPOSE 1984 8554 8555 8555/udp
 ENTRYPOINT ["/sbin/tini", "--"]
