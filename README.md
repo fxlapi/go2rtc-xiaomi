@@ -1,4 +1,4 @@
-# go2rtc-patched（自编译补丁版 go2rtc 的 HA 插件仓库）
+# go2rtc-xiaomi（小米摄像头优化版 go2rtc 的 HA 插件仓库）
 
 这是给 Home Assistant 用的自维护插件仓库，包含打完补丁的 go2rtc 源码和插件配置。
 更新节奏完全自主：官方更新不会覆盖本插件。
@@ -16,14 +16,14 @@
 
 1. 把本仓库上传到 GitHub（保持目录结构）。
 2. HA → 设置 → 插件 → 右上角菜单 → 仓库 → 右下角「添加仓库」，填本仓库地址。
-3. 在列表里找到「go2rtc (patched)」安装。
+3. 在列表里找到「go2rtc (xiaomi)」安装。
 4. 首次安装 HA 会在本机构建镜像（需几分钟，源码里已配国内 Go 模块代理）。
 5. 配置迁移：把原 go2rtc 插件的配置（`/config/go2rtc.yaml`）保持不变即可，两个插件共用同一份配置文件。
 6. 确认新插件正常后，再停用/卸载原 go2rtc 插件。
 
 ## 更新方法
 
-改完源码后把 `go2rtc-patched/config.yaml` 里的 `version` 提一位（如 `1.9.15-p1` → `1.9.15-p2`），
+改完源码后把 `go2rtc-xiaomi/config.yaml` 里的 `version` 提一位（如 `1.9.15-p1` → `1.9.15-p2`），
 推送到 GitHub，HA 插件页就会出现更新提示。
 
 ## 注意

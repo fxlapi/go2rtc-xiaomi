@@ -2,12 +2,12 @@
 # 补丁内容：
 #   1. PR #2575：登录后持续排空 CS2 命令队列，修复「pop buffer is full」卡顿
 #   2. CW501D 双镜头单连接合并（commit b713d79 + flags 位通道解析 + channel=2 映射修复）
-name: go2rtc (patched)
-description: Patched go2rtc - pop buffer fix + CW501D dual-lens single connection
+name: go2rtc (xiaomi)
+description: Patched go2rtc for Xiaomi cameras - pop buffer fix + CW501D dual-lens single connection
 url: https://github.com/fxlapi/go2rtc-xiaomi
 arch: [ amd64 ]
 version: 1.9.15-p1
-slug: go2rtc_patched
+slug: go2rtc_xiaomi
 init: false
 startup: system
 host_network: true
