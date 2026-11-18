@@ -182,6 +182,10 @@ textarea.yaml{width:100%;height:calc(100vh - 240px);resize:vertical;font:13px/1.
 const $ = (s, el) => (el || document).querySelector(s);
 const $$ = (s, el) => [...(el || document).querySelectorAll(s)];
 
+/* 兼容 HA ingress 等反向代理子路径：以当前页面路径推导 API 前缀 */
+const BASE = location.pathname.endsWith("/") ? location.pathname : location.pathname.replace(/[^/]*$/, "");
+const API = BASE + "api";
+
 const SEL_KEY = "g2panel.live.sel";
 const ORDER_KEY = "g2panel.live.order";
 const CAM_NAMES = {
@@ -252,7 +256,7 @@ function saveArr(k, a) { try { localStorage.setItem(k, JSON.stringify(a)); } cat
 pageInit.live = async () => {
   if (Live.CAMS.length) return;
   try {
-    const d = await jget("/api/streams");
+    const d = await jget(API + "/streams");
     Live.CAMS = Object.keys(d);
     renderChips(); renderGrid();
     for (const n of Live.CAMS) if (Live.SEL.has(n)) play(n);
@@ -420,7 +424,7 @@ async function play(name) {
 
   const connect = () => {
     if (player.stopped || !Live.SEL.has(name)) return;
-    const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/api/ws?src=" + encodeURIComponent(name);
+    const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + BASE + "api/ws?src=" + encodeURIComponent(name);
     let ws;
     try { ws = new WebSocket(wsUrl); } catch (e) { showErr("连接失败：" + e); scheduleReconnect(name, player); return; }
     ws.binaryType = "arraybuffer";
@@ -509,7 +513,7 @@ pageInit.streams = loadStreams;
 async function loadStreams() {
   const tb = $("#stbody");
   try {
-    const d = await jget("/api/streams");
+    const d = await jget(API + "/streams");
     const names = Object.keys(d);
     if (!names.length) { tb.innerHTML = `<tr><td colspan="4" style="color:var(--dim)">还没有配置任何流，用下面的表单添加。</td></tr>`; return; }
     tb.innerHTML = "";
@@ -543,7 +547,7 @@ async function loadStreams() {
       tr.querySelector('[data-act="del"]').onclick = async () => {
         if (!confirm(`确定删除「${camName(n)}」吗？会从配置文件中移除。`)) return;
         try {
-          await api("/api/streams?src=" + encodeURIComponent(n), { method: "DELETE" });
+          await api(API + "/streams?src=" + encodeURIComponent(n), { method: "DELETE" });
           toast("已删除 " + camName(n));
           Live.SEL.delete(n); saveSet(SEL_KEY, Live.SEL); stop(n);
           loadStreams();
@@ -568,7 +572,7 @@ $("#fSave").onclick = async () => {
   const src = $("#fSrc").value.trim();
   if (!name || !src) { toast("名称和来源都要填", true); return; }
   try {
-    await api(`/api/streams?name=${encodeURIComponent(name)}&src=${encodeURIComponent(src)}`, { method: "PUT" });
+    await api(`${API}/streams?name=${encodeURIComponent(name)}&src=${encodeURIComponent(src)}`, { method: "PUT" });
     toast("已保存 " + camName(name));
     $("#fReset").click();
     loadStreams();
@@ -586,13 +590,13 @@ pageInit.log = () => {
     $("#logPause").textContent = Log.paused ? "恢复刷新" : "暂停刷新";
   };
   $("#logClear").onclick = async () => {
-    try { await api("/api/log", { method: "DELETE" }); fetchLog(); } catch (e) { toast("清空失败：" + e.message, true); }
+    try { await api(API + "/log", { method: "DELETE" }); fetchLog(); } catch (e) { toast("清空失败：" + e.message, true); }
   };
   $("#logErrOnly").onchange = (e) => { Log.errOnly = e.target.checked; renderLog(Log.last); };
 };
 async function fetchLog() {
   try {
-    const txt = await (await api("/api/log")).text();
+    const txt = await (await api(API + "/log")).text();
     Log.last = txt;
     renderLog(txt);
   } catch (e) { $("#logbox").textContent = "读取失败：" + e.message; }
@@ -619,14 +623,14 @@ function renderLog(txt) {
 pageInit.cfg = loadConfig;
 async function loadConfig() {
   try {
-    $("#cfgText").value = await (await api("/api/config")).text();
+    $("#cfgText").value = await (await api(API + "/config")).text();
     $("#cfgHint").textContent = "";
   } catch (e) { toast("读取配置失败：" + e.message, true); }
 }
 async function saveConfig() {
   const body = $("#cfgText").value;
   try {
-    await api("/api/config", { method: "POST", body, headers: { "Content-Type": "application/yaml" } });
+    await api(API + "/config", { method: "POST", body, headers: { "Content-Type": "application/yaml" } });
     return true;
   } catch (e) { toast("保存失败：" + e.message, true); return false; }
 }
@@ -637,7 +641,7 @@ $("#cfgSave").onclick = async () => {
 $("#cfgSaveRestart").onclick = async () => {
   if (!confirm("保存并重启 go2rtc？重启期间画面会中断几秒。")) return;
   if (!(await saveConfig())) return;
-  try { await api("/api/restart", { method: "POST" }); toast("已保存，go2rtc 重启中…"); }
+  try { await api(API + "/restart", { method: "POST" }); toast("已保存，go2rtc 重启中…"); }
   catch (e) { toast("已保存；重启请求失败：" + e.message, true); }
 };
 $("#cfgReload").onclick = loadConfig;
@@ -645,7 +649,7 @@ $("#cfgReload").onclick = loadConfig;
 /* ─────────── 启动 ─────────── */
 (async () => {
   try {
-    const info = await jget("/api");
+    const info = await jget(API);
     $("#ver").textContent = "v" + (info.version || "").split("+")[0].trim();
     $("#ver").title = info.config_path || "";
   } catch (e) { $("#hdot").classList.add("off"); }
