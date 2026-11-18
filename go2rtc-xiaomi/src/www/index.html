@@ -212,7 +212,18 @@ const CAM_NAMES = {
   houyuan1: "后院 1", houyuan2: "后院 2", diannao: "电脑房", erlou: "二楼",
   ChuFang: "厨房", yilou: "一楼", dianshi: "电视", zhuwo: "主卧",
 };
-const camName = (k) => CAM_NAMES[k] || k;
+const camName = (k) => loadNames()[k] || CAM_NAMES[k] || k;
+/* 流名 → 中文显示名（一键添加时保存，仅用于界面显示，不写入配置） */
+const NAMES_KEY = "g2panel.names";
+const loadNames = () => { try { return JSON.parse(localStorage.getItem(NAMES_KEY) || "{}") || {}; } catch (e) { return {}; } };
+const saveName = (k, v) => {
+  try {
+    const m = loadNames();
+    if (v && v !== k) m[k] = v; else delete m[k];
+    localStorage.setItem(NAMES_KEY, JSON.stringify(m));
+  } catch (e) {}
+};
+const camDisplayName = (k) => loadNames()[k] || CAM_NAMES[k] || k;
 
 const CODECS = [
   "avc1.640029", "avc1.64002A", "avc1.640033",
@@ -646,23 +657,51 @@ async function loadMiDevices() {
 
 async function miAddStream(btn, box) {
   const src = btn.dataset.src, cloudName = btn.dataset.name, did = btn.dataset.did;
-  let name = cloudName || ("camera" + (did || Date.now()));
-  try {
-    const streams = await jget(API + "/streams");
-    if (streams[name]) {
-      const same = (streams[name].producers || []).some((p) => (p.url || "").includes("did=" + did));
-      if (!same) name = name + "-" + (did || Date.now());
+  const suggest = "cam" + (did ? did.slice(-4) : String(Date.now()).slice(-4));
+  /* 行内输入英文流名：配置里只写英文，中文名仅作显示 */
+  const wrap = document.createElement("span");
+  wrap.style.cssText = "display:flex;gap:6px;align-items:center";
+  wrap.innerHTML = `<input style="width:150px;padding:5px 8px;font-size:12.5px" placeholder="英文流名，如 ${esc(suggest)}" spellcheck="false">`;
+  const inp = wrap.firstChild;
+  const ok = document.createElement("button");
+  ok.className = "btn"; ok.style.padding = "5px 12px"; ok.textContent = "确定";
+  const no = document.createElement("button");
+  no.className = "btn ghost"; no.style.padding = "5px 12px"; no.textContent = "取消";
+  wrap.append(ok, no);
+  btn.replaceWith(wrap);
+  inp.focus();
+  no.onclick = () => wrap.replaceWith(btn);
+  const submit = async () => {
+    const name = inp.value.trim();
+    if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name)) {
+      inp.style.borderColor = "var(--err)";
+      toast("流名称需为英文：字母开头，可含数字、下划线、短横线", true);
+      return;
     }
-    btn.disabled = true;
-    await api(`${API}/streams?name=${encodeURIComponent(name)}&src=${encodeURIComponent(src)}`, { method: "PUT" });
-    toast("已添加 " + camName(name));
-    btn.outerHTML = '<span class="badge">已添加</span>';
-    loadStreams();
-    refreshLiveCams();
-  } catch (e) {
-    toast("添加失败：" + e.message, true);
-    btn.disabled = false;
-  }
+    try {
+      const streams = await jget(API + "/streams");
+      if (streams[name]) {
+        inp.style.borderColor = "var(--err)";
+        toast("流名称已被占用，请换一个英文名", true);
+        return;
+      }
+      ok.disabled = true;
+      await api(`${API}/streams?name=${encodeURIComponent(name)}&src=${encodeURIComponent(src)}`, { method: "PUT" });
+      saveName(name, cloudName || "");
+      toast("已添加 " + camName(name));
+      wrap.outerHTML = '<span class="badge">已添加</span>';
+      loadStreams();
+      refreshLiveCams();
+    } catch (e) {
+      toast("添加失败：" + e.message, true);
+      ok.disabled = false;
+    }
+  };
+  ok.onclick = submit;
+  inp.onkeydown = (e) => {
+    if (e.key === "Enter") submit();
+    if (e.key === "Escape") wrap.replaceWith(btn);
+  };
 }
 
 async function refreshLiveCams() {
