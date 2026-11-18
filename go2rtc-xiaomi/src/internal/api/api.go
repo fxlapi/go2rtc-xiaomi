@@ -27,6 +27,7 @@ func Init() {
 			LocalAuth  bool   `yaml:"local_auth"`
 			BasePath   string `yaml:"base_path"`
 			StaticDir  string `yaml:"static_dir"`
+			PanelDir   string `yaml:"panel_dir"`
 			Origin     string `yaml:"origin"`
 			TLSListen  string `yaml:"tls_listen"`
 			TLSCert    string `yaml:"tls_cert"`
@@ -52,6 +53,7 @@ func Init() {
 	log = app.GetLogger("api")
 
 	initStatic(cfg.Mod.StaticDir)
+	initPanel(cfg.Mod.PanelDir)
 
 	HandleFunc("api", apiHandler)
 	HandleFunc("api/config", configHandler)
