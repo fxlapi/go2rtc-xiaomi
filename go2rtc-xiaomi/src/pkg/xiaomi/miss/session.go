@@ -68,18 +68,11 @@ func sessionKey(rawURL string) (string, error) {
 	if did := u.Query().Get("did"); did != "" {
 		key += "|" + did
 	}
-	// p34: back to ONE connection PER LENS (p27 behavior). Packet counters
-	// (p29-p33, 2026-11-19) settled it: on a single connection the camera's
-	// media config is locked by the first cmdVideoStart — the dual merge as
-	// the first command yields ch0-only video with no audio, and ANY later
-	// command (merge or ch1-add) bursts the new channel for ~1s then the
-	// camera stops sending it. Dual-lens on one connection is not achievable
-	// with this firmware's command set. Per-lens connections cost 2 slots
-	// while both lenses are watched; the slots free automatically when the
-	// streams go idle, leaving room for the Mi Home app.
-	if ch := u.Query().Get("channel"); ch == "1" || ch == "2" {
-		key += "|ch1"
-	}
+	// p35-test: ONE connection per camera again. Working hypothesis: the
+	// merge command makes the camera output a single COMBINED wide stream
+	// (both lenses side by side, 2880x1620 recorded 2026-11-19 morning) on
+	// ch0 — ch1 going silent is expected in that mode, not a failure. The
+	// p29-p33 "camera stops sending lens 2" reading misinterpreted it.
 	return key, nil
 }
 
@@ -181,11 +174,16 @@ func (s *session) startMedia(channel uint8, quality, audio string) error {
 	s.quality[ch] = quality
 	defer s.mu.Unlock()
 
-	// p34: per-lens sessions (see sessionKey) — each connection starts
-	// exactly one channel with a single command, the only path this firmware
-	// honors with a sustained stream and an immediate IDR.
+	// p35-test: first command on the connection is the FULL dual merge
+	// (both qualities set). If the camera answers with the combined wide
+	// stream, ch0 carries both lenses; ch1 silence is expected.
 	if s.client.Model() == "isa.camera.cw501d" {
-		log.Printf("[xiaomi] p34 per-lens session: starting ch%d only", ch)
+		log.Printf("[xiaomi] p35-test: sending full dual merge as first command (ch%d requested)", ch)
+		if err := s.client.StartMediaDual(quality, quality, audio); err != nil {
+			return err
+		}
+		s.startedMask |= 1<<0 | 1<<1
+		return nil
 	}
 	chStr := "0"
 	if channel == 1 {
@@ -321,6 +319,16 @@ func (s *session) dispatch(pkt *Packet) {
 
 	// Audio packets are broadcast to all streams.
 	if isAudioCodec(pkt.CodecID) {
+		for _, st := range streams {
+			st.push(pkt)
+		}
+		return
+	}
+
+	// p35-test: dual-merge mode — the camera answers with a single combined
+	// stream (ch0). Broadcast video to every stream so both panes get the
+	// wide picture while we verify what the camera actually sends.
+	if s.client.Model() == "isa.camera.cw501d" {
 		for _, st := range streams {
 			st.push(pkt)
 		}
