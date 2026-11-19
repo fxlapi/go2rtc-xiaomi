@@ -64,39 +64,24 @@ func sessionKey(rawURL string) (string, error) {
 }
 
 // getOrCreateSession returns an existing session for the camera or creates a
-// new one. Dafang-like models don't support dual-channel and always get a
+// new one. Dafang-like models that don't support dual-channel always get a
 // fresh client (no session sharing).
-//
-// The CW501D firmware only accepts the start order "channel 1 first, then
-// channel 0 joins via the dual-channel command" on a shared connection. When
-// channel 0 is already streaming and channel 1 is requested, the session is
-// torn down and rebuilt so channel 1 starts first; the channel-0 producer
-// reconnects right after and joins via the proven dual-channel command. This
-// keeps both lenses on a single connection (one camera connection slot).
-func getOrCreateSession(rawURL string, channel uint8) (*session, error) {
+func getOrCreateSession(rawURL string) (*session, error) {
 	key, err := sessionKey(rawURL)
 	if err != nil {
 		return nil, err
 	}
 
 	sessionMu.Lock()
-	s, ok := sessions[key]
-	reuse := ok && !s.client.IsDafangLike()
-	if reuse && channel == 1 && s.startedMask == 1 {
-		// Channel 0 streaming alone: firmware can't add channel 1 to this
-		// connection. Tear the session down so a fresh one is created with
-		// channel 1 starting first; the channel-0 producer errors out and
-		// reconnects, then joins via the proven dual-channel command. Both
-		// lenses end up on one connection (one camera connection slot).
-		delete(sessions, key)
-		reuse = false
-		s.shutdown()
+	if s, ok := sessions[key]; ok {
+		// Reuse existing session only if the underlying client supports
+		// dual-channel (not dafang-like).
+		if !s.client.IsDafangLike() {
+			sessionMu.Unlock()
+			return s, nil
+		}
 	}
 	sessionMu.Unlock()
-
-	if reuse {
-		return s, nil
-	}
 
 	client, err := NewClient(rawURL)
 	if err != nil {
@@ -112,7 +97,7 @@ func getOrCreateSession(rawURL string, channel uint8) (*session, error) {
 		}, nil
 	}
 
-	s = &session{
+	s := &session{
 		client:  client,
 		key:     key,
 		streams: make(map[*stream]struct{}),
