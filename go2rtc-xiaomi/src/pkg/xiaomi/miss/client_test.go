@@ -93,3 +93,16 @@ func (c *commandConn) ReadCommand() (uint32, []byte, error) {
 	}
 	return cmdAuthRes, res.data, res.err
 }
+
+func TestNormalizeQualityCW501D(t *testing.T) {
+	// CW501D 高清档需要 quality 3；quality 2 只给 360P 预览流。
+	c := &Client{model: ModelCW501D}
+	require.Equal(t, "3", c.normalizeQuality("hd"))
+	require.Equal(t, "3", c.normalizeQuality(""))
+	require.Equal(t, "1", c.normalizeQuality("sd"))
+	require.Equal(t, "0", c.normalizeQuality("auto"))
+
+	// 其他机型保持上游默认：hd -> 2。
+	other := &Client{model: "isa.camera.500dh"}
+	require.Equal(t, "2", other.normalizeQuality("hd"))
+}

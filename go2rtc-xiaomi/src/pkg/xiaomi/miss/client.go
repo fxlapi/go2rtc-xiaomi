@@ -165,6 +165,8 @@ const (
 	ModelLoockV2 = "loock.cateye.v02"
 	ModelC200    = "chuangmi.camera.046c04"
 	ModelC300    = "chuangmi.camera.72ac1"
+	// ModelCW501D 室外摄像机4双摄版：高清档需要 quality 3；quality 2 只给 360P 预览流。
+	ModelCW501D = "isa.camera.cw501d"
 	// ModelXiaofang looks like it has the same firmware as the ModelDafang.
 	// There is also an older model "isa.camera.isc5" that only works with the legacy protocol.
 	ModelXiaofang = "isa.camera.isc5c1"
@@ -219,7 +221,7 @@ func (c *Client) normalizeQuality(quality string) string {
 	switch quality {
 	case "", "hd":
 		switch c.model {
-		case ModelC200, ModelC300:
+		case ModelC200, ModelC300, ModelCW501D:
 			return "3"
 		default:
 			return "2"
