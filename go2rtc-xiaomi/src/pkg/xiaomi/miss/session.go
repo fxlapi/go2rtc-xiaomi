@@ -196,18 +196,42 @@ func (s *session) startMedia(channel uint8, quality, audio string) error {
 	}
 	s.quality[ch] = quality
 
-	// p28: deterministic ch1-first startup for dual-lens cameras — the only
-	// single-connection sequence the firmware honors. Field tests 2026-11-19:
-	// every path that configures ch0 first and later adds ch1 is silently
-	// ignored (single+dual back-to-back p25, dual-as-first-command p26,
-	// dual-on-established-ch0 p20/p23). But ch1 fresh-started first, then the
-	// dual merge, works — that is also what made the 2026-11-18 simultaneous
-	// open succeed (the ch1 dial won the race). Both lenses then flow
-	// permanently on this one connection; opening/closing lenses never
-	// touches the media config again. Lens2 shows instantly; lens1 waits for
-	// ch0's next IDR (~20s) after the merge.
+	// p32 TEST: ch0-first + ch1-add retest with packet counters. The 15:47
+	// observation that the ch1-add command stops ch0 may have been a
+	// dispatch artifact; retest cleanly.
 	if s.client.Model() == "isa.camera.cw501d" && s.startedMask == 0 {
-		log.Printf("[xiaomi] p28 startup: ch1 first, then merge ch0 (requested ch%d)", ch)
+		if ch == 0 {
+			log.Printf("[xiaomi] p32 startup: ch0 first, then ch1-add (no ch0 reconfig)")
+			if err := s.client.StartMedia("0", quality, audio); err != nil {
+				return err
+			}
+			s.quality[0] = quality
+			if s.quality[1] == "" {
+				s.quality[1] = quality
+			}
+			s.startedMask = 1 << 0
+			s.mu.Unlock()
+			ch0OK := s.awaitChannelVideo(0, 6*time.Second)
+			s.mu.Lock()
+			if ch0OK {
+				// ch1-add command: {"videoquality":-1,"videoquality2":...}
+				// — keeps ch0 untouched, starts ch1.
+				if err := s.client.StartMedia("1", s.quality[1], audio); err != nil {
+					log.Printf("[xiaomi] p32 startup: ch1-add failed (%v), keeping ch0 only", err)
+					return nil
+				}
+				s.startedMask = 1<<0 | 1<<1
+				s.mu.Unlock()
+				s.sampleAfterMerge()
+				s.mu.Lock()
+				log.Printf("[xiaomi] p32 startup: ch0 + ch1-add sent")
+				return nil
+			}
+			log.Printf("[xiaomi] p32 startup: ch0 no video after single start")
+			return nil
+		}
+		// ch1 requested first: keep the p28 sequence (single "1" then merge).
+		log.Printf("[xiaomi] p32 startup: ch1 first, then merge ch0 (requested ch%d)", ch)
 		if err := s.client.StartMedia("1", quality, audio); err != nil {
 			return err
 		}
