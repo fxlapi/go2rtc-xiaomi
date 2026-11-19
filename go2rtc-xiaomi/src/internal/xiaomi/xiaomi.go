@@ -22,6 +22,7 @@ import (
 	"github.com/AlexxIT/go2rtc/pkg/core"
 	"github.com/AlexxIT/go2rtc/pkg/xiaomi"
 	"github.com/AlexxIT/go2rtc/pkg/xiaomi/crypto"
+	"github.com/AlexxIT/go2rtc/pkg/xiaomi/miss"
 	"github.com/rs/zerolog"
 )
 
@@ -146,23 +147,7 @@ func Init() {
 		log.Info().Msg("[xiaomi] stored token upgraded to encrypted form")
 	}
 
-	streams.HandleFunc("xiaomi", func(rawURL string) (core.Producer, error) {
-		u, err := url.Parse(rawURL)
-		if err != nil {
-			return nil, err
-		}
-
-		if u.User != nil {
-			rawURL, err = getCameraURL(u)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		log.Debug().Msgf("xiaomi: dial %s", rawURL)
-
-		return xiaomi.Dial(rawURL)
-	})
+	streams.HandleFunc("xiaomi", dialCamera)
 
 	api.HandleFunc("api/xiaomi", apiXiaomi)
 }
@@ -172,6 +157,125 @@ var log zerolog.Logger
 var tokens map[string]string
 var clouds map[string]*xiaomi.Cloud
 var cloudsMu sync.Mutex
+
+// missMux shares one MISS connection across both lenses of a dual-channel
+// camera (PR #2688). One mux per camera, cached by user:region:did.
+type missMux interface {
+	Open(rawURL string) (core.Producer, error)
+	Closed() bool
+	Close() error
+}
+
+type camera struct {
+	mu  sync.Mutex
+	mux missMux
+}
+
+var (
+	cameras   = map[string]*camera{}
+	camerasMu sync.Mutex
+
+	resolveCameraURL = getCameraURL
+	dialDirect       = xiaomi.Dial
+
+	openMissMux = func(rawURL string) (missMux, error) {
+		client, err := miss.NewClient(rawURL)
+		if err != nil {
+			return nil, err
+		}
+		return miss.NewMux(client), nil
+	}
+)
+
+func getCamera(key string) *camera {
+	camerasMu.Lock()
+	defer camerasMu.Unlock()
+	if cam := cameras[key]; cam != nil {
+		return cam
+	}
+	cam := &camera{}
+	cameras[key] = cam
+	return cam
+}
+
+func cameraKey(u *url.URL) string {
+	key := u.Host
+	if did := u.Query().Get("did"); did != "" {
+		key = did
+	}
+	if u.User != nil {
+		region, _ := u.User.Password()
+		return u.User.Username() + ":" + region + ":" + key
+	}
+	return u.Host + "|" + key
+}
+
+func resolveURL(u *url.URL, rawURL string) (string, error) {
+	if u.User == nil {
+		return rawURL, nil
+	}
+	cameraURL := *u
+	return resolveCameraURL(&cameraURL)
+}
+
+// dialCamera opens either a standalone legacy/dafang client or a shared MISS
+// mux for the camera's MISS-capable vendor. The two lenses of the same camera
+// reuse one mux (one connection slot) instead of opening a second connection.
+func dialCamera(rawURL string) (core.Producer, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, err
+	}
+
+	model := u.Query().Get("model")
+	if xiaomi.IsLegacy(model) || model == miss.ModelDafang || model == miss.ModelXiaofang {
+		if rawURL, err = resolveURL(u, rawURL); err != nil {
+			return nil, err
+		}
+		log.Debug().Msgf("xiaomi: dial legacy %s", rawURL)
+		return dialDirect(rawURL)
+	}
+
+	if _, err = miss.ParseChannel(u.Query().Get("channel")); err != nil {
+		return nil, err
+	}
+
+	cam := getCamera(cameraKey(u))
+	cam.mu.Lock()
+	defer cam.mu.Unlock()
+
+	if cam.mux != nil && !cam.mux.Closed() {
+		prod, err := cam.mux.Open(rawURL)
+		if err == nil {
+			return prod, nil
+		}
+		if !cam.mux.Closed() {
+			return nil, err
+		}
+		cam.mux = nil
+	}
+
+	if rawURL, err = resolveURL(u, rawURL); err != nil {
+		return nil, err
+	}
+	log.Debug().Msgf("xiaomi: dial miss %s", rawURL)
+
+	if !strings.Contains(rawURL, "vendor") {
+		return dialDirect(rawURL)
+	}
+
+	mux, err := openMissMux(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	prod, err := mux.Open(rawURL)
+	if err != nil {
+		_ = mux.Close()
+		return nil, err
+	}
+	cam.mux = mux
+	return prod, nil
+}
 
 // missCred caches MISS authentication credentials so the second channel of a
 // dual-channel camera can skip the cloud API call.

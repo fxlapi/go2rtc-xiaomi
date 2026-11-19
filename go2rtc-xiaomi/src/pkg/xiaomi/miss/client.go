@@ -140,16 +140,13 @@ func (c *Client) Version() string {
 	return fmt.Sprintf("%s (%s)", c.Conn.Version(), c.model)
 }
 
-// Model returns the camera model string.
-func (c *Client) Model() string {
-	return c.model
+func (c *Client) isDafang() bool {
+	return c.model == ModelDafang || c.model == ModelXiaofang
 }
 
-// IsDafangLike returns true for models that use the dafang firmware
-// protocol and do not support standard dual-channel commands.
-func (c *Client) IsDafangLike() bool {
+func (c *Client) usesLensTags() bool {
 	switch c.model {
-	case ModelDafang, ModelXiaofang:
+	case "isa.camera.hlmax", "isa.camera.500dh", "isa.camera.cw501d":
 		return true
 	}
 	return false
@@ -206,20 +203,17 @@ func (c *Client) StartMedia(channel, quality, audio string) error {
 	return c.WriteCommand(data)
 }
 
-// StartMediaDual starts both channel 0 and channel 1 in a single command.
 func (c *Client) StartMediaDual(quality0, quality1, audio string) error {
+	quality0 = c.normalizeQuality(quality0)
 	quality1 = c.normalizeQuality(quality1)
 	if audio == "" {
 		audio = "1"
 	}
-	// Both qualities in one command: ask the camera to multiplex both lenses.
 	data := binary.BigEndian.AppendUint32(nil, cmdVideoStart)
 	data = fmt.Appendf(data, `{"videoquality":%s,"videoquality2":%s,"enableaudio":%s}`, quality0, quality1, audio)
-	c.debugCount = 0 // re-arm header debug to capture packets after dual start
 	return c.WriteCommand(data)
 }
 
-// normalizeQuality converts user-facing quality strings to protocol values.
 func (c *Client) normalizeQuality(quality string) string {
 	// 0 - auto, 1 - sd, 2 - hd, default - hd
 	switch quality {
@@ -288,36 +282,13 @@ func (c *Client) ReadPacket() (*Packet, error) {
 		Payload:  payload,
 	}
 
-	// Parse channel from header byte 28 for dual-channel cameras.
-	// Valid values: 0 or 1, with frame type in hdr[24:28] being <= 3.
-	if len(hdr) >= 29 {
+	if !c.usesLensTags() {
 		frameType := binary.LittleEndian.Uint32(hdr[24:28])
 		ch := hdr[28]
 		if ch <= 1 && frameType <= 3 {
 			pkt.Channel = ch
 			pkt.ChannelOK = true
 		}
-	}
-
-	// CW501D: header byte 28 is not a channel marker. The flags field carries
-	// the lens identity: lens 1 = 0x001ea0xx, lens 2 = 0x015ea0xx (bit 0x01400000 set).
-	if !pkt.ChannelOK && c.model == "isa.camera.cw501d" && !isAudioCodec(pkt.CodecID) {
-		if pkt.Flags&0x01400000 != 0 {
-			pkt.Channel = 1
-		} else {
-			pkt.Channel = 0
-		}
-		pkt.ChannelOK = true
-	}
-
-	if c.debugCount < 600 && os.Getenv("GO2RTC_DEBUG_HDR") != "" {
-		c.debugCount++
-		codecName := "video"
-		if isAudioCodec(pkt.CodecID) {
-			codecName = "audio"
-		}
-		log.Printf("HDRDBG model=%s codec=%s(%08x) seq=%d flags=%d hdr=%s payloadLen=%d ch=%d chOK=%v",
-			c.model, codecName, pkt.CodecID, pkt.Sequence, pkt.Flags, hex.EncodeToString(hdr), len(payload), pkt.Channel, pkt.ChannelOK)
 	}
 
 	switch c.model {
@@ -327,6 +298,18 @@ func (c *Client) ReadPacket() (*Packet, error) {
 		pkt.Timestamp = uint64(time.Now().UnixMilli())
 	default:
 		pkt.Timestamp = binary.LittleEndian.Uint64(hdr[16:])
+	}
+
+	if c.debugCount < 600 && os.Getenv("GO2RTC_DEBUG_HDR") != "" {
+		c.debugCount++
+		audio := pkt.CodecID == codecPCM || pkt.CodecID == codecPCMU ||
+			pkt.CodecID == codecPCMA || pkt.CodecID == codecOPUS
+		codecName := "video"
+		if audio {
+			codecName = "audio"
+		}
+		log.Printf("HDRDBG model=%s codec=%s(%08x) seq=%d flags=%#08x hdr=%s payloadLen=%d ch=%d chOK=%v",
+			c.model, codecName, pkt.CodecID, pkt.Sequence, pkt.Flags, hex.EncodeToString(hdr), len(payload), pkt.Channel, pkt.ChannelOK)
 	}
 
 	return pkt, nil
@@ -353,8 +336,8 @@ type Packet struct {
 	Sequence  uint32
 	Flags     uint32
 	Timestamp uint64 // msec
-	Channel   uint8  // video channel (0 or 1), parsed from header
-	ChannelOK bool   // true if Channel was successfully parsed
+	Channel   uint8  // video channel (0 or 1)
+	ChannelOK bool   // true if Channel was parsed from header
 	//TimestampS uint32
 	//Reserved uint32
 	Payload []byte
