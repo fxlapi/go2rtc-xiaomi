@@ -177,6 +177,39 @@ func (s *session) startMedia(channel uint8, quality, audio string) error {
 	}
 	s.quality[ch] = quality
 
+	// p25: dual-lens cameras start BOTH channels on this connection with the
+	// very first media command (single for the requested lens, then the dual
+	// command immediately after — the sequence that made the original
+	// single-connection dual-lens playback work on 2026-11-18). Both channels
+	// then flow permanently; opening or closing a lens never touches the
+	// media config again, so there is no mid-session reconfig and no
+	// broken-frame window. Still exactly one camera connection.
+	//
+	// Field tests 2026-11-19 (p20-p24) showed every mid-session join path is
+	// broken on current firmware: ch0-playing + dual never adds ch1, and the
+	// three-step dance leaves 40-70s of broken frames. Starting dual up front
+	// sidesteps all of it.
+	if s.client.Model() == "isa.camera.cw501d" && s.startedMask == 0 {
+		chStr := "0"
+		if ch == 1 {
+			chStr = "1"
+		}
+		if err := s.client.StartMedia(chStr, quality, audio); err != nil {
+			return err
+		}
+		if s.quality[other] == "" {
+			s.quality[other] = quality
+		}
+		if err := s.client.StartMediaDual(s.quality[0], s.quality[1], audio); err != nil {
+			// Dual start failed: fall back to single-channel mode; the
+			// join path below handles a later second lens.
+			s.startedMask = 1 << ch
+			return nil
+		}
+		s.startedMask = 1<<0 | 1<<1
+		return nil
+	}
+
 	// If the other channel is already started, upgrade to dual-channel.
 	if s.startedMask&(1<<other) != 0 {
 		// CW501D field tests (2026-11-19 14:10-16:34, p20/p21/p23):
