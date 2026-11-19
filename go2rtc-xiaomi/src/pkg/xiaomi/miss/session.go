@@ -196,88 +196,30 @@ func (s *session) startMedia(channel uint8, quality, audio string) error {
 	}
 	s.quality[ch] = quality
 
-	// p32 TEST: ch0-first + ch1-add retest with packet counters. The 15:47
-	// observation that the ch1-add command stops ch0 may have been a
-	// dispatch artifact; retest cleanly.
+	// p33 TEST: dual merge as the FIRST media command on the connection.
+	// Packet counters (p29-p32) proved any later reconfig bursts the new
+	// channel for ~1s then drops it — the camera's media config is effectively
+	// set by the first cmdVideoStart. The p26 "merge-first fails" conclusion
+	// was likely a single-stream dispatch artifact (the only registered stream
+	// received ch0's picture, misread as "ch1 dead").
 	if s.client.Model() == "isa.camera.cw501d" && s.startedMask == 0 {
-		if ch == 0 {
-			log.Printf("[xiaomi] p32 startup: ch0 first, then ch1-add (no ch0 reconfig)")
-			if err := s.client.StartMedia("0", quality, audio); err != nil {
-				return err
-			}
-			s.quality[0] = quality
-			if s.quality[1] == "" {
-				s.quality[1] = quality
-			}
-			s.startedMask = 1 << 0
-			s.mu.Unlock()
-			ch0OK := s.awaitChannelVideo(0, 6*time.Second)
-			s.mu.Lock()
-			if ch0OK {
-				// ch1-add command: {"videoquality":-1,"videoquality2":...}
-				// — keeps ch0 untouched, starts ch1.
-				if err := s.client.StartMedia("1", s.quality[1], audio); err != nil {
-					log.Printf("[xiaomi] p32 startup: ch1-add failed (%v), keeping ch0 only", err)
-					return nil
-				}
-				s.startedMask = 1<<0 | 1<<1
-				s.mu.Unlock()
-				s.sampleAfterMerge()
-				s.mu.Lock()
-				log.Printf("[xiaomi] p32 startup: ch0 + ch1-add sent")
-				return nil
-			}
-			log.Printf("[xiaomi] p32 startup: ch0 no video after single start")
-			return nil
-		}
-		// ch1 requested first: keep the p28 sequence (single "1" then merge).
-		log.Printf("[xiaomi] p32 startup: ch1 first, then merge ch0 (requested ch%d)", ch)
-		if err := s.client.StartMedia("1", quality, audio); err != nil {
-			return err
-		}
+		log.Printf("[xiaomi] p33 startup: merge as first command (requested ch%d)", ch)
+		s.quality[0] = quality
 		s.quality[1] = quality
-		if s.quality[0] == "" {
-			s.quality[0] = quality
-		}
-		s.startedMask = 1 << 1
-		// Wait for ch1 to actually deliver video before the merge, without
-		// holding the lock (dispatch takes s.mu on every packet).
-		s.mu.Unlock()
-		ch1OK := s.awaitChannelVideo(1, 6*time.Second)
-		s.mu.Lock()
-		if ch1OK {
-			if err := s.client.StartMediaDual(s.quality[0], s.quality[1], audio); err != nil {
-				log.Printf("[xiaomi] p28 startup: merge failed (%v), keeping ch1 only", err)
-				// ch1-only fallback: if the viewer asked for ch0, start it
-				// single (this stops ch1 — unavoidable on this firmware).
-				if ch == 0 {
-					if err := s.client.StartMedia("0", s.quality[0], audio); err != nil {
-						return err
-					}
-					s.startedMask = 1 << 0
-					return nil
-				}
-				return nil
-			}
-			s.startedMask = 1<<0 | 1<<1
-			// p30 diagnostics: capture the first video packets after the
-			// merge to see what the camera actually sends for each lens.
-			s.mu.Unlock()
-			s.sampleAfterMerge()
-			s.mu.Lock()
-			log.Printf("[xiaomi] p28 startup: both channels live on one connection")
-			return nil
-		}
-		// ch1 never delivered video: keep the ch1-only session (watchdog may
-		// recover it); if the viewer asked for ch0, start it single.
-		log.Printf("[xiaomi] p28 startup: ch1 no video after single start")
-		if ch == 0 {
-			if err := s.client.StartMedia("0", s.quality[0], audio); err != nil {
+		if err := s.client.StartMediaDual(s.quality[0], s.quality[1], audio); err != nil {
+			// Fall back to a single-channel start for the requested lens.
+			log.Printf("[xiaomi] p33 startup: merge failed (%v), single ch%d", err, ch)
+			if err := s.client.StartMedia(itoaCh(uint8(ch)), quality, audio); err != nil {
 				return err
 			}
-			s.startedMask = 1<<0 | 1<<1
+			s.startedMask = 1 << ch
 			return nil
 		}
+		s.startedMask = 1<<0 | 1<<1
+		s.mu.Unlock()
+		s.sampleAfterMerge()
+		s.mu.Lock()
+		log.Printf("[xiaomi] p33 startup: merge sent as first command")
 		return nil
 	}
 
@@ -402,6 +344,14 @@ func (s *session) retryChannelIfDead(ch uint8, quality, audio string) {
 	}
 	s.startedMask = 1<<0 | 1<<1
 	log.Printf("[xiaomi] p28: three-step recovery done, both channels restarted")
+}
+
+// itoaCh renders a channel number as its command string ("0" or "1").
+func itoaCh(ch uint8) string {
+	if ch == 1 {
+		return "1"
+	}
+	return "0"
 }
 
 // sampleAfterMerge arms the worker to log the next 20 video packets after a
