@@ -537,6 +537,10 @@ func (c *Cloud) Request(baseURL, apiURL, params string, headers map[string]strin
 	defer res.Body.Close()
 
 	if res.StatusCode != http.StatusOK {
+		errBody, _ := io.ReadAll(io.LimitReader(res.Body, 256))
+		if len(errBody) > 0 {
+			return nil, fmt.Errorf("xiaomi: %s: %s", res.Status, errBody)
+		}
 		return nil, errors.New(res.Status)
 	}
 

@@ -149,7 +149,7 @@ func (c *Client) StartMedia(video, audio string) error {
 			c.WriteCommandJSON(0x0704, `{}`), // don't know why
 		)
 
-	case ModelIMILABA1, ModelMijia:
+	case ModelIMILABA1, ModelIMILABDoor, ModelMijia:
 		// 0 - auto, 1 - low, 3 - hd
 		switch video {
 		case "", "hd":
@@ -253,9 +253,11 @@ func DecodeVideo(data, key []byte) ([]byte, error) {
 const (
 	ModelAqaraG2  = "lumi.camera.gwagl01"
 	ModelIMILABA1 = "chuangmi.camera.ipc019e"
-	ModelLoockV1  = "loock.cateye.v01"
-	ModelXiaobai  = "chuangmi.camera.xiaobai"
-	ModelXiaofang = "isa.camera.isc5"
+	// ModelIMILABDoor is IMILAB (Chuangmi) door camera, same family as A1.
+	ModelIMILABDoor = "chuangmi.camera.ipc020"
+	ModelLoockV1    = "loock.cateye.v01"
+	ModelXiaobai    = "chuangmi.camera.xiaobai"
+	ModelXiaofang   = "isa.camera.isc5"
 	// ModelMijia support miss format for new fw and legacy format for old fw
 	ModelMijia = "chuangmi.camera.v2"
 	// ModelDafang support miss format for new fw and legacy format for old fw
@@ -264,7 +266,7 @@ const (
 
 func Supported(model string) bool {
 	switch model {
-	case ModelAqaraG2, ModelIMILABA1, ModelLoockV1, ModelXiaobai, ModelXiaofang:
+	case ModelAqaraG2, ModelIMILABA1, ModelIMILABDoor, ModelLoockV1, ModelXiaobai, ModelXiaofang:
 		return true
 	}
 	return false
