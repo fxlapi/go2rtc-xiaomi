@@ -28,6 +28,8 @@ nav{display:flex;gap:4px;flex:1}
 nav button{padding:7px 14px;border-radius:8px;color:var(--dim);font-size:13.5px}
 nav button:hover{color:var(--txt);background:var(--bg2)}
 nav button.on{color:var(--txt);background:var(--card);font-weight:500}
+nav a.navlink{padding:7px 14px;border-radius:8px;color:var(--dim);font-size:13.5px;text-decoration:none;display:inline-flex;align-items:center}
+nav a.navlink:hover{color:var(--txt);background:var(--bg2)}
 .ver{font-size:12px;color:var(--dim);white-space:nowrap}
 
 main{max-width:1500px;margin:0 auto;padding:16px 18px 40px}
@@ -110,6 +112,7 @@ textarea.yaml{width:100%;height:calc(100vh - 240px);resize:vertical;font:13px/1.
     <button data-p="streams">设备</button>
     <button data-p="log">日志</button>
     <button data-p="cfg">配置</button>
+    <a class="navlink" href="classic.html" target="_blank" title="go2rtc 官方原版界面">原版界面</a>
   </nav>
   <div class="ver" id="ver"></div>
 </header>

@@ -18,6 +18,11 @@ func initStatic(staticDir string) {
 	base := len(basePath)
 	fileServer := http.FileServer(root)
 
+	// 官方原版前端入口：/classic -> /classic.html
+	HandleFunc("classic", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, basePath+"/classic.html", http.StatusFound)
+	})
+
 	HandleFunc("", func(w http.ResponseWriter, r *http.Request) {
 		if base > 0 {
 			r.URL.Path = r.URL.Path[base:]
