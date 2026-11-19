@@ -65,6 +65,18 @@ func sessionKey(rawURL string) (string, error) {
 	if did := u.Query().Get("did"); did != "" {
 		key += "|" + did
 	}
+	// p27: one connection PER LENS for dual cameras. Field tests 2026-11-19
+	// (p25/p26) proved the firmware silently ignores every attempt to add
+	// ch1 to a connection where ch0 was configured first — single+dual
+	// back-to-back, dual as the very first command, dual on an established
+	// ch0 stream: ch1 never delivers video. And after any dual merge, ch1
+	// waits for its next IDR (~60s GOP) before showing a picture. The only
+	// fast path for ch1 is a fresh single-channel start on its own
+	// connection, which is also how the camera worked before the
+	// single-connection dual patch.
+	if ch := u.Query().Get("channel"); ch == "1" || ch == "2" {
+		key += "|ch1"
+	}
 	return key, nil
 }
 
@@ -155,12 +167,11 @@ func (s *session) startMedia(channel uint8, quality, audio string) error {
 	// Already started this channel.
 	if s.startedMask&(1<<ch) != 0 {
 		s.mu.Unlock()
-		// p26 watchdog: the startup dual command may have been silently
-		// ignored by the firmware (p25 field test 17:38). If a ch1 viewer
-		// shows up and ch1 still has no video, recover with the verified
-		// three-step dance instead of leaving the lens dead.
-		if s.client.Model() == "isa.camera.cw501d" && ch == 1 {
-			go s.recoverCh1IfDead()
+		// p27 watchdog: if this per-lens session's channel never delivers
+		// video (command silently ignored by the firmware), retry the
+		// single start once instead of leaving the lens dead.
+		if s.client.Model() == "isa.camera.cw501d" {
+			go s.retryChannelIfDead(uint8(ch), quality, audio)
 		}
 		return nil
 	}
@@ -188,31 +199,11 @@ func (s *session) startMedia(channel uint8, quality, audio string) error {
 	}
 	s.quality[ch] = quality
 
-	// p26: dual-lens cameras get the dual command as the VERY FIRST media
-	// command on a fresh connection — no single start before it.
-	//
-	// Field evidence so far:
-	// - 2026-11-19 17:38 (p25): single ch0 + immediate dual -> ch1 probe
-	//   timed out (35s, no video). So "single first, then dual" does NOT
-	//   work even back-to-back.
-	// - 2026-11-18: the only verified single-connection dual-lens success
-	//   was a simultaneous two-stream open, where the dual command may have
-	//   landed before the camera fully committed to single-channel mode.
-	// p26 tests the remaining untested variant: configure both channels
-	// with the first command, before any single-channel mode exists.
+	// p27: sessions are per-lens (see sessionKey), so each connection starts
+	// exactly one channel with a single command — the only path the firmware
+	// honors with an immediate IDR. No dual/merge commands on startup.
 	if s.client.Model() == "isa.camera.cw501d" && s.startedMask == 0 {
-		if s.quality[other] == "" {
-			s.quality[other] = quality
-		}
-		err := s.client.StartMediaDual(s.quality[0], s.quality[1], audio)
-		log.Printf("[xiaomi] p26 startup dual: first cmd ch%d q0=%s q1=%s audio=%s err=%v",
-			ch, s.quality[0], s.quality[1], audio, err)
-		if err == nil {
-			s.startedMask = 1<<0 | 1<<1
-			return nil
-		}
-		log.Printf("[xiaomi] p26 startup dual failed, falling back to single ch%d: %v", ch, err)
-		// Fall through to the single-channel start below.
+		log.Printf("[xiaomi] p27 per-lens session: starting ch%d only", ch)
 	}
 
 	// If the other channel is already started, upgrade to dual-channel.
@@ -286,47 +277,40 @@ func (s *session) awaitChannelVideo(ch uint8, timeout time.Duration) bool {
 	return false
 }
 
-// recoverCh1IfDead is the p26 safety net: if the startup dual command was
-// silently ignored by the firmware (ch1 never delivers video), run the
-// verified three-step dance — single "1" (stops ch0, starts ch1), wait for
-// ch1 frames, then the dual command re-adds ch0. Only one recovery runs at
+// retryChannelIfDead is the p27 safety net: if this per-lens session's
+// channel never delivers video (firmware silently ignored the start
+// command), re-send the single-channel start once. Only one retry runs at
 // a time; a healthy session returns immediately.
-func (s *session) recoverCh1IfDead() {
+func (s *session) retryChannelIfDead(ch uint8, quality, audio string) {
 	if !s.ch1Recover.CompareAndSwap(false, true) {
 		return
 	}
 	defer s.ch1Recover.Store(false)
 
-	if s.awaitChannelVideo(1, 12*time.Second) {
+	if s.awaitChannelVideo(ch, 12*time.Second) {
 		return
 	}
-
-	s.mu.Lock()
-	if s.startedMask != 1<<0|1<<1 || s.quality[1] == "" {
-		// Session not in the startup-dual state (or already recovered
-		// by someone else); nothing to do here.
-		s.mu.Unlock()
-		return
-	}
-	log.Printf("[xiaomi] p26: ch1 has no video after startup dual, running three-step recovery")
-	if err := s.client.StartMedia("1", s.quality[1], ""); err != nil {
-		log.Printf("[xiaomi] p26: recovery single start failed: %v", err)
-		s.mu.Unlock()
-		return
-	}
-	s.startedMask = 1 << 1
-	s.mu.Unlock()
-
-	time.Sleep(3 * time.Second)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.client.StartMediaDual(s.quality[0], s.quality[1], ""); err != nil {
-		log.Printf("[xiaomi] p26: recovery dual start failed: %v", err)
+	if s.startedMask != 1<<ch {
+		// Session state changed meanwhile; nothing to retry here.
 		return
 	}
-	s.startedMask = 1<<0 | 1<<1
-	log.Printf("[xiaomi] p26: three-step recovery done, both channels restarted")
+	log.Printf("[xiaomi] p27: ch%d has no video, retrying single start", ch)
+	if err := s.client.StartMedia(itoaCh(ch), quality, audio); err != nil {
+		log.Printf("[xiaomi] p27: retry start failed: %v", err)
+		return
+	}
+	log.Printf("[xiaomi] p27: retry start done for ch%d", ch)
+}
+
+// itoaCh renders a channel number as its command string ("0" or "1").
+func itoaCh(ch uint8) string {
+	if ch == 1 {
+		return "1"
+	}
+	return "0"
 }
 
 // worker is the read loop that dispatches packets to streams.
@@ -366,9 +350,18 @@ func (s *session) dispatch(pkt *Packet) {
 		return
 	}
 
-	// If only one stream is active, send all video to it.
+	// If only one stream is active, send all video to it. p27: when the
+	// packet channel is known and differs from the stream's channel, still
+	// deliver the packet (single-consumer sessions get whatever the camera
+	// sends) but do NOT mark gotVideo — the watchdog must not mistake
+	// another lens's frames for this lens delivering video.
 	if len(streams) == 1 {
-		streams[0].push(pkt)
+		st := streams[0]
+		if pkt.ChannelOK && pkt.Channel != st.channel {
+			st.pushNoVideo(pkt)
+		} else {
+			st.push(pkt)
+		}
 		return
 	}
 
@@ -521,6 +514,20 @@ func (st *stream) push(pkt *Packet) {
 	case st.ch <- pkt:
 	default:
 		// Drop packet if the buffer is full.
+	}
+}
+
+// pushNoVideo delivers the packet without marking the stream as having
+// received its own lens's video (p27 watchdog accuracy).
+func (st *stream) pushNoVideo(pkt *Packet) {
+	select {
+	case <-st.done:
+		return
+	default:
+	}
+	select {
+	case st.ch <- pkt:
+	default:
 	}
 }
 
