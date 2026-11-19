@@ -2,6 +2,7 @@ package miss
 
 import (
 	"io"
+	"log"
 	"net"
 	"net/url"
 	"sync"
@@ -29,6 +30,9 @@ type session struct {
 
 	speakerOnce sync.Once
 	speakerErr  error
+
+	// ch1Recover guards the p26 ch1 recovery goroutine (one at a time).
+	ch1Recover atomic.Bool
 }
 
 // stream represents a single channel's view of a session. It receives
@@ -151,6 +155,13 @@ func (s *session) startMedia(channel uint8, quality, audio string) error {
 	// Already started this channel.
 	if s.startedMask&(1<<ch) != 0 {
 		s.mu.Unlock()
+		// p26 watchdog: the startup dual command may have been silently
+		// ignored by the firmware (p25 field test 17:38). If a ch1 viewer
+		// shows up and ch1 still has no video, recover with the verified
+		// three-step dance instead of leaving the lens dead.
+		if s.client.Model() == "isa.camera.cw501d" && ch == 1 {
+			go s.recoverCh1IfDead()
+		}
 		return nil
 	}
 
@@ -177,37 +188,31 @@ func (s *session) startMedia(channel uint8, quality, audio string) error {
 	}
 	s.quality[ch] = quality
 
-	// p25: dual-lens cameras start BOTH channels on this connection with the
-	// very first media command (single for the requested lens, then the dual
-	// command immediately after — the sequence that made the original
-	// single-connection dual-lens playback work on 2026-11-18). Both channels
-	// then flow permanently; opening or closing a lens never touches the
-	// media config again, so there is no mid-session reconfig and no
-	// broken-frame window. Still exactly one camera connection.
+	// p26: dual-lens cameras get the dual command as the VERY FIRST media
+	// command on a fresh connection — no single start before it.
 	//
-	// Field tests 2026-11-19 (p20-p24) showed every mid-session join path is
-	// broken on current firmware: ch0-playing + dual never adds ch1, and the
-	// three-step dance leaves 40-70s of broken frames. Starting dual up front
-	// sidesteps all of it.
+	// Field evidence so far:
+	// - 2026-11-19 17:38 (p25): single ch0 + immediate dual -> ch1 probe
+	//   timed out (35s, no video). So "single first, then dual" does NOT
+	//   work even back-to-back.
+	// - 2026-11-18: the only verified single-connection dual-lens success
+	//   was a simultaneous two-stream open, where the dual command may have
+	//   landed before the camera fully committed to single-channel mode.
+	// p26 tests the remaining untested variant: configure both channels
+	// with the first command, before any single-channel mode exists.
 	if s.client.Model() == "isa.camera.cw501d" && s.startedMask == 0 {
-		chStr := "0"
-		if ch == 1 {
-			chStr = "1"
-		}
-		if err := s.client.StartMedia(chStr, quality, audio); err != nil {
-			return err
-		}
 		if s.quality[other] == "" {
 			s.quality[other] = quality
 		}
-		if err := s.client.StartMediaDual(s.quality[0], s.quality[1], audio); err != nil {
-			// Dual start failed: fall back to single-channel mode; the
-			// join path below handles a later second lens.
-			s.startedMask = 1 << ch
+		err := s.client.StartMediaDual(s.quality[0], s.quality[1], audio)
+		log.Printf("[xiaomi] p26 startup dual: first cmd ch%d q0=%s q1=%s audio=%s err=%v",
+			ch, s.quality[0], s.quality[1], audio, err)
+		if err == nil {
+			s.startedMask = 1<<0 | 1<<1
 			return nil
 		}
-		s.startedMask = 1<<0 | 1<<1
-		return nil
+		log.Printf("[xiaomi] p26 startup dual failed, falling back to single ch%d: %v", ch, err)
+		// Fall through to the single-channel start below.
 	}
 
 	// If the other channel is already started, upgrade to dual-channel.
@@ -279,6 +284,49 @@ func (s *session) awaitChannelVideo(ch uint8, timeout time.Duration) bool {
 		time.Sleep(200 * time.Millisecond)
 	}
 	return false
+}
+
+// recoverCh1IfDead is the p26 safety net: if the startup dual command was
+// silently ignored by the firmware (ch1 never delivers video), run the
+// verified three-step dance — single "1" (stops ch0, starts ch1), wait for
+// ch1 frames, then the dual command re-adds ch0. Only one recovery runs at
+// a time; a healthy session returns immediately.
+func (s *session) recoverCh1IfDead() {
+	if !s.ch1Recover.CompareAndSwap(false, true) {
+		return
+	}
+	defer s.ch1Recover.Store(false)
+
+	if s.awaitChannelVideo(1, 12*time.Second) {
+		return
+	}
+
+	s.mu.Lock()
+	if s.startedMask != 1<<0|1<<1 || s.quality[1] == "" {
+		// Session not in the startup-dual state (or already recovered
+		// by someone else); nothing to do here.
+		s.mu.Unlock()
+		return
+	}
+	log.Printf("[xiaomi] p26: ch1 has no video after startup dual, running three-step recovery")
+	if err := s.client.StartMedia("1", s.quality[1], ""); err != nil {
+		log.Printf("[xiaomi] p26: recovery single start failed: %v", err)
+		s.mu.Unlock()
+		return
+	}
+	s.startedMask = 1 << 1
+	s.mu.Unlock()
+
+	time.Sleep(3 * time.Second)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.client.StartMediaDual(s.quality[0], s.quality[1], ""); err != nil {
+		log.Printf("[xiaomi] p26: recovery dual start failed: %v", err)
+		return
+	}
+	s.startedMask = 1<<0 | 1<<1
+	log.Printf("[xiaomi] p26: three-step recovery done, both channels restarted")
 }
 
 // worker is the read loop that dispatches packets to streams.
