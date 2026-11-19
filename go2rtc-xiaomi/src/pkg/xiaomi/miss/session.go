@@ -37,8 +37,8 @@ type session struct {
 	// sampleN counts remaining post-merge packets to log (p30 diagnostics).
 	sampleN atomic.Int32
 
-	// idleTimer delays session teardown after the last viewer leaves (p37):
-	// a cold camera wake + merged-mode start takes ~15-30s, so keeping the
+	// idleTimer delays session teardown after the last viewer leaves:
+	// a cold camera wake + first start takes ~15-30s, so keeping the
 	// session warm for a short window makes panel reopen instant.
 	idleTimer *time.Timer
 	done      chan struct{}
@@ -63,8 +63,8 @@ var (
 	sessions  = map[string]*session{}
 
 	// idleKeepAlive is how long a session with no viewers stays connected
-	// before shutting down (p37). Cold camera wake + merged-mode start is
-	// slow (~15-30s), so a short warm window makes panel reopen instant.
+	// before shutting down. Cold camera wake + first start is slow
+	// (~15-30s), so a short warm window makes panel reopen instant.
 	idleKeepAlive = 2 * time.Minute
 )
 
@@ -79,11 +79,17 @@ func sessionKey(rawURL string) (string, error) {
 	if did := u.Query().Get("did"); did != "" {
 		key += "|" + did
 	}
-	// p35-test: ONE connection per camera again. Working hypothesis: the
-	// merge command makes the camera output a single COMBINED wide stream
-	// (both lenses side by side, 2880x1620 recorded 2026-11-19 morning) on
-	// ch0 — ch1 going silent is expected in that mode, not a failure. The
-	// p29-p33 "camera stops sending lens 2" reading misinterpreted it.
+	// Per-lens sessions: the second lens gets its own connection key, so the
+	// two lenses open independent MISS sessions. Packet counters settled that
+	// this firmware locks the media config to the first VideoStart command on a
+	// single connection — the dual merge as the first command yields ch0-only
+	// video with no audio, and ANY later command bursts the new lens for ~1s
+	// then the camera stops sending it. Per-lens connections cost 2 slots
+	// while both lenses are watched; the slots free automatically when idle,
+	// leaving room for the Mi Home app.
+	if ch := u.Query().Get("channel"); ch == "1" || ch == "2" {
+		key += "|ch1"
+	}
 	return key, nil
 }
 
@@ -195,16 +201,11 @@ func (s *session) startMedia(channel uint8, quality, audio string) error {
 	s.quality[ch] = quality
 	defer s.mu.Unlock()
 
-	// p35-test: first command on the connection is the FULL dual merge
-	// (both qualities set). If the camera answers with the combined wide
-	// stream, ch0 carries both lenses; ch1 silence is expected.
+	// Per-lens sessions: each connection starts exactly one channel with a
+	// single command — the only path this firmware honors with a sustained
+	// stream and an immediate IDR.
 	if s.client.Model() == "isa.camera.cw501d" {
-		log.Printf("[xiaomi] p35-test: sending full dual merge as first command (ch%d requested)", ch)
-		if err := s.client.StartMediaDual(quality, quality, audio); err != nil {
-			return err
-		}
-		s.startedMask |= 1<<0 | 1<<1
-		return nil
+		log.Printf("[xiaomi] per-lens session: starting ch%d only", ch)
 	}
 	chStr := "0"
 	if channel == 1 {
@@ -347,16 +348,6 @@ func (s *session) dispatch(pkt *Packet) {
 
 	// Audio packets are broadcast to all streams.
 	if isAudioCodec(pkt.CodecID) {
-		for _, st := range streams {
-			st.push(pkt)
-		}
-		return
-	}
-
-	// p35-test: dual-merge mode — the camera answers with a single combined
-	// stream (ch0). Broadcast video to every stream so both panes get the
-	// wide picture while we verify what the camera actually sends.
-	if s.client.Model() == "isa.camera.cw501d" {
 		for _, st := range streams {
 			st.push(pkt)
 		}

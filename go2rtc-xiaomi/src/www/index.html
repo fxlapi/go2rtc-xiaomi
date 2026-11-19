@@ -47,10 +47,6 @@ main{max-width:1500px;margin:0 auto;padding:16px 18px 40px}
 .tile.dragging{opacity:.35}
 .tile:not(.dragging):hover{outline:2px solid rgba(255,255,255,.22)}
 .tile video{width:100%;height:100%;object-fit:contain;display:block;background:#000}
-/* 双摄合成流（cw501d 合并模式）：摄像头输出一条左右拼接的 2880x1620 宽流，
- * 每个镜头窗格放大到 200% 宽并只显示对应一半，零转码成本 */
-.tile.lens-l video{width:200%;object-position:left center}
-.tile.lens-r video{width:200%;object-position:right center}
 .tile .lbl{position:absolute;left:10px;top:8px;background:rgba(0,0,0,.55);color:#fff;font-size:12px;
   padding:3px 9px;border-radius:6px;pointer-events:none}
 .tile .tools{position:absolute;right:8px;top:8px;display:flex;gap:6px}
@@ -282,7 +278,7 @@ $$("nav button").forEach((b) => {
 /* ─────────── 画面页 ─────────── */
 const Live = {
   CAMS: [], SEL: loadSet(SEL_KEY), ORDER: loadArr(ORDER_KEY),
-  PLAYERS: {}, RETRIES: {}, LENS: {},
+  PLAYERS: {}, RETRIES: {},
   orderedSel() {
     const out = this.ORDER.filter((n) => this.SEL.has(n));
     for (const n of this.SEL) if (!out.includes(n)) out.push(n);
@@ -304,34 +300,10 @@ pageInit.live = async () => {
   try {
     const d = await jget(API + "/streams");
     Live.CAMS = Object.keys(d);
-    await loadLensMap();
     renderChips(); renderGrid();
     for (const n of Live.CAMS) if (Live.SEL.has(n)) play(n);
   } catch (e) { toast("读取摄像头列表失败：" + e.message, true); }
 };
-
-/* 双摄合成流识别：cw501d 合并模式下同一设备的多个镜头流都输出
- * 同一条左右拼接宽流，按 channel 排序确定各流显示左半还是右半 */
-async function loadLensMap() {
-  try {
-    const cfg = await configStreams();
-    const byDid = {};
-    for (const [n, st] of Object.entries(cfg)) {
-      for (const url of st.urls) {
-        if (!/cw501d/i.test(url)) continue;
-        const did = (url.match(/did=(\d+)/) || [])[1] || "?";
-        const ch = (url.match(/[?&]channel=(\d+)/) || [])[1] || "0";
-        (byDid[did] = byDid[did] || []).push([n, ch]);
-      }
-    }
-    const lens = {};
-    for (const pairs of Object.values(byDid)) {
-      pairs.sort((a, b) => Number(a[1]) - Number(b[1]));
-      pairs.forEach(([n], i) => { lens[n] = i === 0 ? "l" : "r"; });
-    }
-    Live.LENS = lens;
-  } catch (e) { Live.LENS = {}; }
-}
 
 function renderChips() {
   const bar = $("#chips");
@@ -377,9 +349,6 @@ function renderGrid() {
     /* 标签实时跟随显示名（米家同步后自动更新） */
     const lbl = tile.querySelector(".lbl");
     if (lbl) lbl.textContent = camName(n);
-    /* 双摄合成流：按镜头裁剪显示对应一半 */
-    tile.classList.toggle("lens-l", Live.LENS[n] === "l");
-    tile.classList.toggle("lens-r", Live.LENS[n] === "r");
     grid.appendChild(tile);
     const v = tile.querySelector("video");
     if (v && Live.PLAYERS[n]) v.play().catch(() => {});
@@ -906,7 +875,6 @@ async function refreshLiveCams() {
   try {
     const d = await jget(API + "/streams");
     Live.CAMS = Object.keys(d);
-    await loadLensMap();
     renderChips(); renderGrid();
   } catch (e) {}
 }
