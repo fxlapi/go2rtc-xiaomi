@@ -179,20 +179,13 @@ func (s *session) startMedia(channel uint8, quality, audio string) error {
 
 	// If the other channel is already started, upgrade to dual-channel.
 	if s.startedMask&(1<<other) != 0 {
-		if ch == 1 {
-			// CW501D firmware quirk (field-tested 2026-11-19, p20 regression):
-			// the dual-channel command only ADDS channel 0 to an already
-			// running channel-1 stream. When channel 0 is the one already
-			// streaming, the dual command does NOT start channel 1 (probe
-			// times out with "no video"). Channel 1 must be started with its
-			// own single-channel command (videoquality:-1 leaves channel 0
-			// unchanged); the camera then multiplexes both on this connection.
-			if err := s.client.StartMedia("1", quality, audio); err != nil {
-				return err
-			}
-			s.startedMask |= 1 << ch
-			return nil
-		}
+		// CW501D field tests (2026-11-19 15:47-15:55, p21 regression):
+		// the single-channel command for channel 1 (videoquality:-1) STOPS
+		// channel 0's video entirely. The dual-channel command is the only
+		// command that adds a channel in either direction. The joining
+		// channel's video may start with ~20s of broken HEVC (missing
+		// reference frames) before valid frames arrive; the probe deadline
+		// is extended (producer.go) to cover that period.
 		err := s.client.StartMediaDual(
 			s.quality[0], s.quality[1], audio,
 		)

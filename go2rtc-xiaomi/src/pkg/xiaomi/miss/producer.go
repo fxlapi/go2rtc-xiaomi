@@ -63,7 +63,11 @@ func Dial(rawURL string) (core.Producer, error) {
 }
 
 func probe(st *stream, audio bool) ([]*core.Media, error) {
-	_ = st.SetDeadline(time.Now().Add(15 * time.Second))
+	// 35s: when the second lens joins a running dual-channel session, the
+	// camera reconfigures the media stream and the joining channel delivers
+	// ~20s of broken HEVC (missing reference frames) before a valid VPS/IDR
+	// arrives. 15s was too short and aborted the first consumer.
+	_ = st.SetDeadline(time.Now().Add(35 * time.Second))
 
 	var vcodec, acodec *core.Codec
 
