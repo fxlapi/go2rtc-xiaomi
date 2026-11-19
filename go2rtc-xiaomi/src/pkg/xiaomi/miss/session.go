@@ -159,12 +159,20 @@ func (s *session) startMedia(channel uint8, quality, audio string) error {
 
 	// If the other channel is already started, upgrade to dual-channel.
 	if s.startedMask&(1<<other) != 0 {
-		// Restart from a stopped state: upgrading directly from an active
-		// single-channel stream sometimes leaves the second lens without
-		// video (probe timeout). Stop first, let the camera settle, then
-		// request both channels in one command.
-		_ = s.client.StopMedia()
-		time.Sleep(500 * time.Millisecond)
+		// Camera firmware quirk (CW501D field tests): the dual-channel
+		// command only adds channel 0 to an already running channel-1
+		// stream. When channel 0 is the one already streaming, starting
+		// channel 1 with its own single-channel command works, and the
+		// camera multiplexes both channels on this connection. Sending the
+		// dual command here (with or without a prior stop) leaves channel 1
+		// without video.
+		if ch == 1 {
+			if err := s.client.StartMedia("1", quality, audio); err != nil {
+				return err
+			}
+			s.startedMask |= 1 << ch
+			return nil
+		}
 		err := s.client.StartMediaDual(
 			s.quality[0], s.quality[1], audio,
 		)
