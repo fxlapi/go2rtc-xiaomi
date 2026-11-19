@@ -33,6 +33,9 @@ type session struct {
 
 	// ch1Recover guards the p26 ch1 recovery goroutine (one at a time).
 	ch1Recover atomic.Bool
+
+	// sampleN counts remaining post-merge packets to log (p30 diagnostics).
+	sampleN atomic.Int32
 }
 
 // stream represents a single channel's view of a session. It receives
@@ -233,6 +236,11 @@ func (s *session) startMedia(channel uint8, quality, audio string) error {
 				return nil
 			}
 			s.startedMask = 1<<0 | 1<<1
+			// p30 diagnostics: capture the first video packets after the
+			// merge to see what the camera actually sends for each lens.
+			s.mu.Unlock()
+			s.sampleAfterMerge()
+			s.mu.Lock()
 			log.Printf("[xiaomi] p28 startup: both channels live on one connection")
 			return nil
 		}
@@ -372,6 +380,13 @@ func (s *session) retryChannelIfDead(ch uint8, quality, audio string) {
 	log.Printf("[xiaomi] p28: three-step recovery done, both channels restarted")
 }
 
+// sampleAfterMerge arms the worker to log the next 20 video packets after a
+// dual merge so we can see exactly what the camera sends for each lens
+// (p30 diagnostics). The worker does the actual logging (single reader).
+func (s *session) sampleAfterMerge() {
+	s.sampleN.Store(20)
+}
+
 // worker is the read loop that dispatches packets to streams.
 func (s *session) worker() {
 	// p29 diagnostics: periodic per-channel packet counts.
@@ -407,6 +422,10 @@ func (s *session) worker() {
 			if vcnt%300 == 0 {
 				log.Printf("[xiaomi] p29 sample: seq=%d flags=%#08x ch=%d chOK=%v codec=%08x",
 					pkt.Sequence, pkt.Flags, pkt.Channel, pkt.ChannelOK, pkt.CodecID)
+			}
+			if n := s.sampleN.Add(-1); n >= 0 {
+				log.Printf("[xiaomi] p30 post-merge sample: seq=%d flags=%#08x ch=%d chOK=%v codec=%08x len=%d",
+					pkt.Sequence, pkt.Flags, pkt.Channel, pkt.ChannelOK, pkt.CodecID, len(pkt.Payload))
 			}
 		}
 
