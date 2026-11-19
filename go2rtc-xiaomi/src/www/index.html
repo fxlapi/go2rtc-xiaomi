@@ -223,11 +223,8 @@ const API = BASE + "api";
 
 const SEL_KEY = "g2panel.live.sel";
 const ORDER_KEY = "g2panel.live.order";
-const CAM_NAMES = {
-  houyuan1: "后院 1", houyuan2: "后院 2", diannao: "电脑房", erlou: "二楼",
-  ChuFang: "厨房", yilou: "一楼", dianshi: "电视", zhuwo: "主卧",
-};
-const camName = (k) => loadNames()[k] || CAM_NAMES[k] || k;
+/* 显示名：优先浏览器本地保存的米家名称（同步或一键添加时写入），否则显示原流名 */
+const camName = (k) => loadNames()[k] || k;
 /* 流名 → 中文显示名（一键添加时保存，仅用于界面显示，不写入配置） */
 const NAMES_KEY = "g2panel.names";
 const loadNames = () => { try { return JSON.parse(localStorage.getItem(NAMES_KEY) || "{}") || {}; } catch (e) { return {}; } };
@@ -238,7 +235,6 @@ const saveName = (k, v) => {
     localStorage.setItem(NAMES_KEY, JSON.stringify(m));
   } catch (e) {}
 };
-const camDisplayName = (k) => loadNames()[k] || CAM_NAMES[k] || k;
 
 const CODECS = [
   "avc1.640029", "avc1.64002A", "avc1.640033",
@@ -300,6 +296,7 @@ function loadArr(k) { try { const v = JSON.parse(localStorage.getItem(k) || "[]"
 function saveArr(k, a) { try { localStorage.setItem(k, JSON.stringify(a)); } catch (e) {} }
 
 pageInit.live = async () => {
+  syncMiNames(false, false);
   if (Live.CAMS.length) return;
   try {
     const d = await jget(API + "/streams");
@@ -824,7 +821,59 @@ async function refreshLiveCams() {
   } catch (e) {}
 }
 
-pageInit.streams = () => loadMiDevices();
+/* ─────────── 米家同步 ───────────
+ * 按内网 IP 把现有流与云端设备对号：
+ * 名称同步为米家名（存浏览器本地，仅用于显示）；
+ * 补齐/更正流配置中的设备号，让「已添加」判断准确。 */
+let miSyncBusy = false;
+async function syncMiNames(verbose, fixDid) {
+  if (miSyncBusy) return;
+  miSyncBusy = true;
+  try {
+    if (!verbose) {
+      const last = +(localStorage.getItem("g2panel.sync.ts") || 0);
+      if (Date.now() - last < 5 * 60 * 1000) return;
+    }
+    const ids = await jget(API + "/xiaomi");
+    if (!ids.length) return;
+    const byIp = {};
+    for (const id of ids) {
+      const d = await jget(API + "/xiaomi?id=" + encodeURIComponent(id) + "&region=cn");
+      for (const s of (d.sources || [])) {
+        const ip = ((s.info || "").match(/ip:\s*([\d.]+)/) || [])[1];
+        const did = (s.url.match(/did=(\d+)/) || [])[1];
+        if (ip && did && !byIp[ip]) byIp[ip] = { did, name: s.name };
+      }
+    }
+    const streams = await jget(API + "/streams");
+    let renamed = 0, fixed = 0;
+    for (const [name, st] of Object.entries(streams)) {
+      const url = ((st.producers || [])[0] || {}).url || "";
+      const ip = (url.match(/@([\d.]+)/) || [])[1];
+      const hit = ip && byIp[ip];
+      if (!hit) continue;
+      if (camName(name) !== hit.name) { saveName(name, hit.name); renamed++; }
+      if (!fixDid) continue;
+      const m = url.match(/did=(\d+)/);
+      if (m && m[1] === hit.did) continue;
+      const nu = m
+        ? url.replace(/did=\d+/, "did=" + hit.did)
+        : url + (url.includes("?") ? "&" : "?") + "did=" + hit.did;
+      await api(`${API}/streams?name=${encodeURIComponent(name)}&src=${encodeURIComponent(nu)}`, { method: "PUT" });
+      fixed++;
+    }
+    localStorage.setItem("g2panel.sync.ts", String(Date.now()));
+    if ((renamed || fixed) && Live.CAMS.length) { renderChips(); renderGrid(); }
+    if ((fixed || renamed) && $("#p-streams").classList.contains("on")) loadMiDevices();
+    if (verbose) toast(renamed || fixed ? `已同步米家：${renamed} 路名称、${fixed} 路设备号` : "名称已是最新，无需同步");
+  } catch (e) {
+    if (verbose) toast("同步失败：" + e.message, true);
+  } finally {
+    miSyncBusy = false;
+  }
+}
+
+pageInit.streams = () => { syncMiNames(true, true); loadMiDevices(); };
 $("#refreshStreams").onclick = () => loadMiDevices();
 
 $("#fTpl").onchange = () => {
