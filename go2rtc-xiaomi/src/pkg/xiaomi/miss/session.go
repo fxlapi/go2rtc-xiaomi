@@ -159,6 +159,12 @@ func (s *session) startMedia(channel uint8, quality, audio string) error {
 
 	// If the other channel is already started, upgrade to dual-channel.
 	if s.startedMask&(1<<other) != 0 {
+		// Restart from a stopped state: upgrading directly from an active
+		// single-channel stream sometimes leaves the second lens without
+		// video (probe timeout). Stop first, let the camera settle, then
+		// request both channels in one command.
+		_ = s.client.StopMedia()
+		time.Sleep(500 * time.Millisecond)
 		err := s.client.StartMediaDual(
 			s.quality[0], s.quality[1], audio,
 		)

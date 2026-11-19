@@ -107,7 +107,7 @@ textarea.yaml{width:100%;height:calc(100vh - 240px);resize:vertical;font:13px/1.
   <div class="brand"><span class="dot" id="hdot"></span>go2rtc</div>
   <nav>
     <button data-p="live" class="on">画面</button>
-    <button data-p="streams">流管理</button>
+    <button data-p="streams">设备</button>
     <button data-p="log">日志</button>
     <button data-p="cfg">配置</button>
   </nav>
@@ -707,6 +707,25 @@ $("#miLoginBtn").onclick = async () => {
   }
 };
 
+/* 从 /api/config 的 YAML 文本解析 streams 段。
+ * 正在播放的流在 /api/streams 里没有 producer.url，只有配置文件里的
+ * 地址最可靠：每路为两空格缩进的「名字:」，下面四空格缩进的「- 地址」列表。 */
+async function configStreams() {
+  const text = await (await fetch(API + "/config")).text();
+  const out = {};
+  let cur = null, inStreams = false;
+  for (const line of text.split("\n")) {
+    if (/^streams:\s*(#.*)?$/.test(line)) { inStreams = true; continue; }
+    if (!inStreams) continue;
+    if (/^\S/.test(line)) break; /* 顶层新键，streams 段结束 */
+    let m = line.match(/^ {2}([^ #][^:]*):\s*$/);
+    if (m) { cur = m[1].trim(); out[cur] = { urls: [] }; continue; }
+    m = line.match(/^ {4}- (\S+?)\s*$/);
+    if (m && cur) out[cur].urls.push(m[1]);
+  }
+  return out;
+}
+
 async function loadMiDevices() {
   const box = $("#miDevices");
   box.innerHTML = '<div class="hint">读取摄像头列表…</div>';
@@ -716,13 +735,12 @@ async function loadMiDevices() {
       box.innerHTML = '<div class="hint">还没有登录过账号，用上面表单登录后即可选择摄像头。</div>';
       return;
     }
-    const streams = await jget(API + "/streams");
+    const cfg = await configStreams();
     const existingDids = new Set();
     const didCh = {};   /* "设备号:通道" -> 流名（双摄按镜头区分） */
     const didName = {};
-    for (const [n, st] of Object.entries(streams)) {
-      for (const p of (st.producers || [])) {
-        const url = p.url || "";
+    for (const [n, st] of Object.entries(cfg)) {
+      for (const url of st.urls) {
         const m = url.match(/did=(\d+)/);
         if (m) {
           existingDids.add(m[1]);
@@ -774,6 +792,8 @@ async function miAddStream(btn, box) {
   const ch = btn.dataset.ch || "";
   /* 双摄：按镜头追加通道参数 */
   if (ch !== "") src += (src.includes("?") ? "&" : "?") + "channel=" + ch;
+  /* 一键添加默认选最高清晰度（hd；各机型协议值在服务端归一） */
+  src += (src.includes("?") ? "&" : "?") + "subtype=hd";
   const suggest = "cam" + (did ? did.slice(-4) : String(Date.now()).slice(-4));
   /* 行内输入英文流名：配置里只写英文，中文名仅作显示 */
   const wrap = document.createElement("span");
@@ -865,10 +885,11 @@ async function syncMiNames(verbose, fixDid) {
         if (ip && did && !byIp[ip]) byIp[ip] = { did, name: s.name, model: (s.url.match(/model=([^&]+)/) || [])[1] || "" };
       }
     }
-    const streams = await jget(API + "/streams");
+    const cfg = await configStreams();
     let renamed = 0, fixed = 0;
-    for (const [name, st] of Object.entries(streams)) {
-      const url = ((st.producers || [])[0] || {}).url || "";
+    for (const [name, st] of Object.entries(cfg)) {
+      const url = st.urls[0] || "";
+      if (!url) continue;
       const ip = (url.match(/@([\d.]+)/) || [])[1];
       const hit = ip && byIp[ip];
       if (!hit) continue;

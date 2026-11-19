@@ -46,9 +46,13 @@ COPY --from=build /build/go2rtc /usr/local/bin/
 
 # 整合界面直接内置于 go2rtc 二进制（src/www/），无需额外面板文件
 
+# 启动脚本：清理 miwifinet 集成里旧的「监控画面」面板注册
+COPY docker/run.sh /usr/local/bin/run.sh
+RUN chmod +x /usr/local/bin/run.sh
+
 EXPOSE 1984 8554 8555 8555/udp
 ENTRYPOINT ["/sbin/tini", "--"]
 VOLUME /config
 WORKDIR /config
 
-CMD ["go2rtc", "-config", "/config/go2rtc.yaml"]
+CMD ["run.sh"]
