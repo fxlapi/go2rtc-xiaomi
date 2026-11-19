@@ -36,6 +36,12 @@ type session struct {
 
 	// sampleN counts remaining post-merge packets to log (p30 diagnostics).
 	sampleN atomic.Int32
+
+	// idleTimer delays session teardown after the last viewer leaves (p37):
+	// a cold camera wake + merged-mode start takes ~15-30s, so keeping the
+	// session warm for a short window makes panel reopen instant.
+	idleTimer *time.Timer
+	done      chan struct{}
 }
 
 // stream represents a single channel's view of a session. It receives
@@ -55,6 +61,11 @@ type stream struct {
 var (
 	sessionMu sync.Mutex
 	sessions  = map[string]*session{}
+
+	// idleKeepAlive is how long a session with no viewers stays connected
+	// before shutting down (p37). Cold camera wake + merged-mode start is
+	// slow (~15-30s), so a short warm window makes panel reopen instant.
+	idleKeepAlive = 2 * time.Minute
 )
 
 // sessionKey builds a cache key from the URL. Two URLs pointing to the same
@@ -107,6 +118,7 @@ func getOrCreateSession(rawURL string) (*session, error) {
 			client:  client,
 			key:     key,
 			streams: make(map[*stream]struct{}),
+			done:    make(chan struct{}),
 		}, nil
 	}
 
@@ -114,6 +126,7 @@ func getOrCreateSession(rawURL string) (*session, error) {
 		client:  client,
 		key:     key,
 		streams: make(map[*stream]struct{}),
+		done:    make(chan struct{}),
 	}
 
 	sessionMu.Lock()
@@ -131,6 +144,14 @@ func getOrCreateSession(rawURL string) (*session, error) {
 
 // openStream creates a new stream for the given channel on this session.
 func (s *session) openStream(channel uint8) *stream {
+	// Cancel any pending idle shutdown — a viewer is back.
+	s.mu.Lock()
+	if s.idleTimer != nil {
+		s.idleTimer.Stop()
+		s.idleTimer = nil
+	}
+	s.mu.Unlock()
+
 	st := &stream{
 		session: s,
 		channel: channel,
@@ -262,13 +283,20 @@ func (s *session) worker() {
 	// p29 diagnostics: periodic per-channel packet counts.
 	var c0, c1, aud, vcnt uint32
 	go func() {
-		for range time.Tick(5 * time.Second) {
-			s.mu.Lock()
-			n := len(s.streams)
-			mask := s.startedMask
-			s.mu.Unlock()
-			log.Printf("[xiaomi] p29 stats: ch0=%d ch1=%d audio=%d streams=%d startedMask=%d",
-				c0, c1, aud, n, mask)
+		tick := time.NewTicker(5 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-tick.C:
+				s.mu.Lock()
+				n := len(s.streams)
+				mask := s.startedMask
+				s.mu.Unlock()
+				log.Printf("[xiaomi] p29 stats: ch0=%d ch1=%d audio=%d streams=%d startedMask=%d",
+					c0, c1, aud, n, mask)
+			case <-s.done:
+				return
+			}
 		}
 	}()
 	for {
@@ -388,7 +416,7 @@ func (s *session) speakerCodec() uint32 {
 }
 
 // removeStream removes a stream from the session. If no streams remain, the
-// session is shut down.
+// session is kept warm for a short idle window (p37) and then shut down.
 func (s *session) removeStream(st *stream) {
 	s.mu.Lock()
 	if _, ok := s.streams[st]; !ok {
@@ -397,19 +425,35 @@ func (s *session) removeStream(st *stream) {
 	}
 	delete(s.streams, st)
 	empty := len(s.streams) == 0
+	if empty && s.idleTimer == nil {
+		s.idleTimer = time.AfterFunc(idleKeepAlive, func() {
+			s.mu.Lock()
+			if len(s.streams) > 0 {
+				// A viewer came back while the timer was pending.
+				s.mu.Unlock()
+				return
+			}
+			s.mu.Unlock()
+			s.shutdown()
+		})
+	}
 	s.mu.Unlock()
 
 	st.close()
-
-	if empty {
-		s.shutdown()
-	}
 }
 
 // shutdown tears down the session, closing all streams and the client.
 func (s *session) shutdown() {
 	s.closeOnce.Do(func() {
 		s.mu.Lock()
+		if s.idleTimer != nil {
+			s.idleTimer.Stop()
+			s.idleTimer = nil
+		}
+		if s.done != nil {
+			close(s.done)
+			s.done = nil
+		}
 		streams := make([]*stream, 0, len(s.streams))
 		for st := range s.streams {
 			streams = append(streams, st)

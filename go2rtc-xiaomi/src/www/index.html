@@ -518,6 +518,10 @@ async function play(name) {
       video.src = player.objUrl;
       video.play().catch(() => {});
       showErr("连接中…");
+      /* 冷启动（摄像头唤醒 + 合并模式出流）约需 15~30 秒，超时未出画时提示 */
+      setTimeout(() => {
+        if (!player.stopped && !player.sb) showErr("摄像头唤醒中，首次出画约需 15~30 秒，请稍候…");
+      }, 8000);
     };
     ws.onmessage = (ev) => {
       if (player.stopped) return;
@@ -525,7 +529,16 @@ async function play(name) {
         let msg;
         try { msg = JSON.parse(ev.data); } catch (e) { return; }
         if (msg && msg.type === "mse" && msg.value) onMime(msg.value);
-        else if (msg && msg.type === "error") showErr("流错误：" + (msg.value || "未知"));
+        else if (msg && msg.type === "error") {
+          const val = msg.value || "未知";
+          if (/codecs not matched/i.test(val) && /265|hevc|hvc/i.test(val)) {
+            /* 浏览器解不了 H.265：重试无意义，给出明确指引 */
+            showErr("该摄像头输出 H.265 画面，当前浏览器不支持解码。请改用 Edge 浏览器，或为 Chrome 安装 HEVC 支持后刷新。");
+          } else {
+            showErr("流错误：" + val);
+            scheduleReconnect(name, player);
+          }
+        }
       } else feed(ev.data);
     };
     ws.onclose = () => {
