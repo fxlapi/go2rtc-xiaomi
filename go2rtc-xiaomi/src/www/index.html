@@ -196,8 +196,7 @@ textarea.yaml{width:100%;height:calc(100vh - 240px);resize:vertical;font:13px/1.
   <section class="page" id="p-cfg">
     <div class="cfgbox">
       <div class="toolbar" style="margin:0">
-        <button class="btn" id="cfgSave">保存配置</button>
-        <button class="btn ghost" id="cfgSaveRestart">保存并重启</button>
+        <button class="btn" id="cfgSaveRestart">保存并重启</button>
         <button class="btn ghost" id="cfgReload">重新读取</button>
         <span class="hint" id="cfgHint"></span>
       </div>
@@ -340,13 +339,16 @@ function renderGrid() {
       tile.dataset.name = n;
       tile.innerHTML = `
         <video muted playsinline autoplay></video>
-        <div class="lbl">${camName(n)}</div>
+        <div class="lbl"></div>
         <div class="tools">
           <button class="mute" title="静音 / 取消静音">🔇</button>
           <button class="close" title="停止播放">×</button>
         </div>`;
       wireTile(tile, n);
     }
+    /* 标签实时跟随显示名（米家同步后自动更新） */
+    const lbl = tile.querySelector(".lbl");
+    if (lbl) lbl.textContent = camName(n);
     grid.appendChild(tile);
     const v = tile.querySelector("video");
     if (v && Live.PLAYERS[n]) v.play().catch(() => {});
@@ -716,12 +718,17 @@ async function loadMiDevices() {
     }
     const streams = await jget(API + "/streams");
     const existingDids = new Set();
+    const didCh = {};   /* "设备号:通道" -> 流名（双摄按镜头区分） */
     const didName = {};
     for (const [n, st] of Object.entries(streams)) {
       for (const p of (st.producers || [])) {
-        const m = (p.url || "").match(/did=(\d+)/);
+        const url = p.url || "";
+        const m = url.match(/did=(\d+)/);
         if (m) {
           existingDids.add(m[1]);
+          const ch = (url.match(/[?&]channel=(\d+)/) || [])[1] || "0";
+          const key = m[1] + ":" + ch;
+          if (!didCh[key]) didCh[key] = n;
           if (!didName[m[1]]) didName[m[1]] = n;
         }
       }
@@ -731,12 +738,21 @@ async function loadMiDevices() {
       const d = await jget(API + "/xiaomi?id=" + encodeURIComponent(id) + "&region=cn");
       for (const s of (d.sources || [])) {
         const did = (s.url.match(/did=(\d+)/) || [])[1] || "";
+        const isDual = /cw501d/i.test(s.url);
+        /* 双摄设备：镜头1/镜头2 分别添加、分别显示状态 */
+        const lensBtn = (ch) => {
+          const added = did && didCh[did + ":" + ch];
+          return added
+            ? `<button class="btn ghost danger" data-delname="${esc(didCh[did + ":" + ch])}" data-did="${esc(did)}">删除镜头${Number(ch) + 1}</button>`
+            : `<button class="btn" data-src="${esc(s.url)}" data-name="${esc(s.name)}" data-did="${esc(did)}" data-ch="${ch}">添加镜头${Number(ch) + 1}</button>`;
+        };
         const added = did && existingDids.has(did);
+        const singleBtn = (added
+          ? `<button class="btn ghost danger" data-delname="${esc(didName[did] || "")}" data-did="${esc(did)}">删除</button>`
+          : `<button class="btn" data-src="${esc(s.url)}" data-name="${esc(s.name)}" data-did="${esc(did)}">添加</button>`);
         html += `<div class="dev">
           <div class="info"><div class="nm">${esc(s.name)}</div><div class="sub">${esc(s.info || "")}</div></div>
-          ${added
-            ? `<button class="btn ghost danger" data-delname="${esc(didName[did] || "")}" data-did="${esc(did)}">删除</button>`
-            : `<button class="btn" data-src="${esc(s.url)}" data-name="${esc(s.name)}" data-did="${esc(did)}">添加</button>`}
+          ${isDual ? `<span style="display:flex;gap:6px;flex:none">${lensBtn("0")}${lensBtn("1")}</span>` : singleBtn}
         </div>`;
       }
     }
@@ -753,7 +769,11 @@ async function loadMiDevices() {
 }
 
 async function miAddStream(btn, box) {
-  const src = btn.dataset.src, cloudName = btn.dataset.name, did = btn.dataset.did;
+  let src = btn.dataset.src;
+  const cloudName = btn.dataset.name, did = btn.dataset.did;
+  const ch = btn.dataset.ch || "";
+  /* 双摄：按镜头追加通道参数 */
+  if (ch !== "") src += (src.includes("?") ? "&" : "?") + "channel=" + ch;
   const suggest = "cam" + (did ? did.slice(-4) : String(Date.now()).slice(-4));
   /* 行内输入英文流名：配置里只写英文，中文名仅作显示 */
   const wrap = document.createElement("span");
@@ -784,7 +804,7 @@ async function miAddStream(btn, box) {
       }
       ok.disabled = true;
       await api(`${API}/streams?name=${encodeURIComponent(name)}&src=${encodeURIComponent(src)}`, { method: "PUT" });
-      saveName(name, cloudName || "");
+      saveName(name, ch === "" ? (cloudName || "") : `${cloudName || ""} 镜头${Number(ch) + 1}`);
       toast("已添加 " + camName(name));
       wrap.outerHTML = '<span class="badge">已添加</span>';
       refreshLiveCams();
@@ -842,7 +862,7 @@ async function syncMiNames(verbose, fixDid) {
       for (const s of (d.sources || [])) {
         const ip = ((s.info || "").match(/ip:\s*([\d.]+)/) || [])[1];
         const did = (s.url.match(/did=(\d+)/) || [])[1];
-        if (ip && did && !byIp[ip]) byIp[ip] = { did, name: s.name };
+        if (ip && did && !byIp[ip]) byIp[ip] = { did, name: s.name, model: (s.url.match(/model=([^&]+)/) || [])[1] || "" };
       }
     }
     const streams = await jget(API + "/streams");
@@ -852,7 +872,11 @@ async function syncMiNames(verbose, fixDid) {
       const ip = (url.match(/@([\d.]+)/) || [])[1];
       const hit = ip && byIp[ip];
       if (!hit) continue;
-      if (camName(name) !== hit.name) { saveName(name, hit.name); renamed++; }
+      /* 双摄设备的两路流按通道追加镜头区分名 */
+      const sch = (url.match(/[?&]channel=(\d+)/) || [])[1];
+      const wantName = (/cw501d/i.test(hit.model || ""))
+        ? `${hit.name} 镜头${Number(sch || "0") + 1}` : hit.name;
+      if (camName(name) !== wantName) { saveName(name, wantName); renamed++; }
       if (!fixDid) continue;
       const m = url.match(/did=(\d+)/);
       if (m && m[1] === hit.did) continue;
@@ -950,10 +974,6 @@ async function saveConfig() {
     return true;
   } catch (e) { toast("保存失败：" + e.message, true); return false; }
 }
-$("#cfgSave").onclick = async () => {
-  if (!confirm("确定保存配置吗？保存后立即生效（部分改动需重启）。")) return;
-  if (await saveConfig()) toast("配置已保存");
-};
 $("#cfgSaveRestart").onclick = async () => {
   if (!confirm("保存并重启 go2rtc？重启期间画面会中断几秒。")) return;
   if (!(await saveConfig())) return;
