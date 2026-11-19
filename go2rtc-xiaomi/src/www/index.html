@@ -78,6 +78,13 @@ main{max-width:1500px;margin:0 auto;padding:16px 18px 40px}
 .qrbox{display:flex;flex-direction:column;align-items:center;gap:8px;padding:4px 0 8px}
 .qrbox img{width:180px;height:180px;border-radius:8px;background:#fff;object-fit:contain}
 .qrbox img:not([src]){opacity:.25}
+.devhead{display:flex;align-items:center;justify-content:space-between;margin:14px 0 8px}
+.devhead span{font-size:13.5px;font-weight:500;color:var(--txt)}
+.dev{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;margin-bottom:6px;background:var(--bg2)}
+.dev .info{flex:1;min-width:0}
+.dev .nm{font-size:13.5px;font-weight:500}
+.dev .sub{font-size:11px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dev .btn{padding:5px 14px;font-size:12.5px;flex-shrink:0}
 .hint{font-size:12px;color:var(--dim);margin-top:8px}
 
 /* ── 日志 ── */
@@ -114,9 +121,6 @@ textarea.yaml{width:100%;height:calc(100vh - 240px);resize:vertical;font:13px/1.
   </section>
 
   <section class="page" id="p-streams">
-    <div class="toolbar">
-      <button class="mini" id="refreshStreams">刷新列表</button>
-    </div>
     <div class="form" id="miCard">
       <h3>小米账号登录</h3>
       <div class="tabs">
@@ -146,6 +150,10 @@ textarea.yaml{width:100%;height:calc(100vh - 240px);resize:vertical;font:13px/1.
           <button class="btn" id="miLoginBtn">登录</button>
           <span class="hint" id="miHint"></span>
         </div>
+      </div>
+      <div class="devhead">
+        <span>摄像头列表</span>
+        <button class="mini" id="refreshStreams">刷新列表</button>
       </div>
       <div id="miDevices"></div>
       <div class="hint">登录一次即可，账号凭证保存在本机配置里，之后打开会自动列出摄像头，点「添加」即可接入。</div>
@@ -727,8 +735,8 @@ async function loadMiDevices() {
       for (const s of (d.sources || [])) {
         const did = (s.url.match(/did=(\d+)/) || [])[1] || "";
         const added = did && existingDids.has(did);
-        html += `<div class="frow" style="margin:0 0 6px;align-items:center">
-          <label style="flex:1;min-width:200px;margin:0"><span class="nm">${esc(s.name)}</span><div style="font-size:11.5px;color:var(--dim)">${esc(s.info || "")}</div></label>
+        html += `<div class="dev">
+          <div class="info"><div class="nm">${esc(s.name)}</div><div class="sub">${esc(s.info || "")}</div></div>
           ${added
             ? `<button class="btn ghost danger" data-delname="${esc(didName[did] || "")}" data-did="${esc(did)}">删除</button>`
             : `<button class="btn" data-src="${esc(s.url)}" data-name="${esc(s.name)}" data-did="${esc(did)}">添加</button>`}
