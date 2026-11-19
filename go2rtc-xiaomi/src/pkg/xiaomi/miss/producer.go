@@ -18,11 +18,6 @@ type Producer struct {
 }
 
 func Dial(rawURL string) (core.Producer, error) {
-	sess, err := getOrCreateSession(rawURL)
-	if err != nil {
-		return nil, err
-	}
-
 	u, _ := url.Parse(rawURL)
 	query := u.Query()
 
@@ -31,6 +26,11 @@ func Dial(rawURL string) (core.Producer, error) {
 	// docs use channel=2 for dual cameras, the dual-session patch uses 1.
 	if ch := query.Get("channel"); ch == "1" || ch == "2" {
 		channel = 1
+	}
+
+	sess, err := getOrCreateSession(rawURL, channel)
+	if err != nil {
+		return nil, err
 	}
 
 	st := sess.openStream(channel)
