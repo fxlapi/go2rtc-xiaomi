@@ -518,9 +518,13 @@ async function play(name) {
       video.src = player.objUrl;
       video.play().catch(() => {});
       showErr("连接中…");
-      /* 冷启动（摄像头唤醒 + 合并模式出流）约需 15~30 秒，超时未出画时提示 */
+      /* 冷启动（摄像头唤醒 + 合并模式出流）约需 15~30 秒；仅在仍是「连接中」时提示，
+         避免覆盖已出现的错误信息 */
       setTimeout(() => {
-        if (!player.stopped && !player.sb) showErr("摄像头唤醒中，首次出画约需 15~30 秒，请稍候…");
+        const el = tile.querySelector(".err");
+        if (!player.stopped && !player.sb && el && el.textContent === "连接中…") {
+          showErr("摄像头唤醒中，首次出画约需 15~30 秒，请稍候…");
+        }
       }, 8000);
     };
     ws.onmessage = (ev) => {
