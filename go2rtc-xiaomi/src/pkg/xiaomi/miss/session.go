@@ -65,18 +65,12 @@ func sessionKey(rawURL string) (string, error) {
 	if did := u.Query().Get("did"); did != "" {
 		key += "|" + did
 	}
-	// p27: one connection PER LENS for dual cameras. Field tests 2026-11-19
-	// (p25/p26) proved the firmware silently ignores every attempt to add
-	// ch1 to a connection where ch0 was configured first — single+dual
-	// back-to-back, dual as the very first command, dual on an established
-	// ch0 stream: ch1 never delivers video. And after any dual merge, ch1
-	// waits for its next IDR (~60s GOP) before showing a picture. The only
-	// fast path for ch1 is a fresh single-channel start on its own
-	// connection, which is also how the camera worked before the
-	// single-connection dual patch.
-	if ch := u.Query().Get("channel"); ch == "1" || ch == "2" {
-		key += "|ch1"
-	}
+	// p28: back to ONE connection per camera. p27's per-lens connections
+	// (2 slots) starved the Mi Home app — the camera only accepts 2
+	// connections total (user report 2026-11-19 18:22). The single-connection
+	// dual-lens session works only with the ch1-first startup sequence
+	// (deterministic version of the 2026-11-18 simultaneous-open success):
+	// see startMedia.
 	return key, nil
 }
 
@@ -167,9 +161,9 @@ func (s *session) startMedia(channel uint8, quality, audio string) error {
 	// Already started this channel.
 	if s.startedMask&(1<<ch) != 0 {
 		s.mu.Unlock()
-		// p27 watchdog: if this per-lens session's channel never delivers
-		// video (command silently ignored by the firmware), retry the
-		// single start once instead of leaving the lens dead.
+		// p28 watchdog: if this channel never delivers video (a command
+		// silently ignored by the firmware), recover instead of leaving
+		// the lens dead.
 		if s.client.Model() == "isa.camera.cw501d" {
 			go s.retryChannelIfDead(uint8(ch), quality, audio)
 		}
@@ -199,11 +193,60 @@ func (s *session) startMedia(channel uint8, quality, audio string) error {
 	}
 	s.quality[ch] = quality
 
-	// p27: sessions are per-lens (see sessionKey), so each connection starts
-	// exactly one channel with a single command — the only path the firmware
-	// honors with an immediate IDR. No dual/merge commands on startup.
+	// p28: deterministic ch1-first startup for dual-lens cameras — the only
+	// single-connection sequence the firmware honors. Field tests 2026-11-19:
+	// every path that configures ch0 first and later adds ch1 is silently
+	// ignored (single+dual back-to-back p25, dual-as-first-command p26,
+	// dual-on-established-ch0 p20/p23). But ch1 fresh-started first, then the
+	// dual merge, works — that is also what made the 2026-11-18 simultaneous
+	// open succeed (the ch1 dial won the race). Both lenses then flow
+	// permanently on this one connection; opening/closing lenses never
+	// touches the media config again. Lens2 shows instantly; lens1 waits for
+	// ch0's next IDR (~20s) after the merge.
 	if s.client.Model() == "isa.camera.cw501d" && s.startedMask == 0 {
-		log.Printf("[xiaomi] p27 per-lens session: starting ch%d only", ch)
+		log.Printf("[xiaomi] p28 startup: ch1 first, then merge ch0 (requested ch%d)", ch)
+		if err := s.client.StartMedia("1", quality, audio); err != nil {
+			return err
+		}
+		s.quality[1] = quality
+		if s.quality[0] == "" {
+			s.quality[0] = quality
+		}
+		s.startedMask = 1 << 1
+		// Wait for ch1 to actually deliver video before the merge, without
+		// holding the lock (dispatch takes s.mu on every packet).
+		s.mu.Unlock()
+		ch1OK := s.awaitChannelVideo(1, 6*time.Second)
+		s.mu.Lock()
+		if ch1OK {
+			if err := s.client.StartMediaDual(s.quality[0], s.quality[1], audio); err != nil {
+				log.Printf("[xiaomi] p28 startup: merge failed (%v), keeping ch1 only", err)
+				// ch1-only fallback: if the viewer asked for ch0, start it
+				// single (this stops ch1 — unavoidable on this firmware).
+				if ch == 0 {
+					if err := s.client.StartMedia("0", s.quality[0], audio); err != nil {
+						return err
+					}
+					s.startedMask = 1 << 0
+					return nil
+				}
+				return nil
+			}
+			s.startedMask = 1<<0 | 1<<1
+			log.Printf("[xiaomi] p28 startup: both channels live on one connection")
+			return nil
+		}
+		// ch1 never delivered video: keep the ch1-only session (watchdog may
+		// recover it); if the viewer asked for ch0, start it single.
+		log.Printf("[xiaomi] p28 startup: ch1 no video after single start")
+		if ch == 0 {
+			if err := s.client.StartMedia("0", s.quality[0], audio); err != nil {
+				return err
+			}
+			s.startedMask = 1<<0 | 1<<1
+			return nil
+		}
+		return nil
 	}
 
 	// If the other channel is already started, upgrade to dual-channel.
@@ -277,10 +320,12 @@ func (s *session) awaitChannelVideo(ch uint8, timeout time.Duration) bool {
 	return false
 }
 
-// retryChannelIfDead is the p27 safety net: if this per-lens session's
-// channel never delivers video (firmware silently ignored the start
-// command), re-send the single-channel start once. Only one retry runs at
-// a time; a healthy session returns immediately.
+// retryChannelIfDead is the p28 safety net for the single-connection dual
+// session: if a channel never delivers video (a command silently ignored by
+// the firmware), re-run the working sequence. ch1 dead: single "1" restarts
+// ch1 (stops ch0), then the dual merge re-adds ch0. ch0 dead: re-send the
+// dual merge (a single "0" command would kill ch1). Only one recovery runs
+// at a time; a healthy session returns immediately.
 func (s *session) retryChannelIfDead(ch uint8, quality, audio string) {
 	if !s.ch1Recover.CompareAndSwap(false, true) {
 		return
@@ -292,25 +337,39 @@ func (s *session) retryChannelIfDead(ch uint8, quality, audio string) {
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.startedMask != 1<<ch {
-		// Session state changed meanwhile; nothing to retry here.
+	if s.startedMask != 1<<0|1<<1 {
+		// Session not in the dual state (or already recovered by
+		// someone else); nothing to do here.
+		s.mu.Unlock()
 		return
 	}
-	log.Printf("[xiaomi] p27: ch%d has no video, retrying single start", ch)
-	if err := s.client.StartMedia(itoaCh(ch), quality, audio); err != nil {
-		log.Printf("[xiaomi] p27: retry start failed: %v", err)
+	if ch == 0 {
+		log.Printf("[xiaomi] p28: ch0 has no video, re-sending merge")
+		if err := s.client.StartMediaDual(s.quality[0], s.quality[1], ""); err != nil {
+			log.Printf("[xiaomi] p28: ch0 merge retry failed: %v", err)
+		}
+		s.mu.Unlock()
 		return
 	}
-	log.Printf("[xiaomi] p27: retry start done for ch%d", ch)
-}
+	log.Printf("[xiaomi] p28: ch1 has no video, running three-step recovery")
+	if err := s.client.StartMedia("1", s.quality[1], ""); err != nil {
+		log.Printf("[xiaomi] p28: recovery single start failed: %v", err)
+		s.mu.Unlock()
+		return
+	}
+	s.startedMask = 1 << 1
+	s.mu.Unlock()
 
-// itoaCh renders a channel number as its command string ("0" or "1").
-func itoaCh(ch uint8) string {
-	if ch == 1 {
-		return "1"
+	time.Sleep(3 * time.Second)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.client.StartMediaDual(s.quality[0], s.quality[1], ""); err != nil {
+		log.Printf("[xiaomi] p28: recovery dual start failed: %v", err)
+		return
 	}
-	return "0"
+	s.startedMask = 1<<0 | 1<<1
+	log.Printf("[xiaomi] p28: three-step recovery done, both channels restarted")
 }
 
 // worker is the read loop that dispatches packets to streams.
