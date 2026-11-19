@@ -59,15 +59,6 @@ main{max-width:1500px;margin:0 auto;padding:16px 18px 40px}
 
 /* ── 流管理 ── */
 .toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
-table{width:100%;border-collapse:collapse;background:var(--card);border-radius:var(--radius);overflow:hidden}
-th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:top}
-th{color:var(--dim);font-weight:500;background:var(--bg2)}
-td .src{color:var(--dim);word-break:break-all;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace}
-td .nm{font-weight:500}
-.rowbtn{display:flex;gap:6px}
-.rowbtn button{padding:4px 10px;border-radius:7px;font-size:12.5px;background:var(--bg2);border:1px solid var(--line)}
-.rowbtn button:hover{border-color:var(--acc)}
-.rowbtn button.danger:hover{border-color:var(--err);color:var(--err)}
 .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11.5px;background:rgba(63,191,111,.15);color:var(--ok)}
 .badge.idle{background:rgba(139,147,167,.15);color:var(--dim)}
 .form{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px;margin-top:16px}
@@ -80,6 +71,13 @@ td .nm{font-weight:500}
 .btn:hover{background:var(--acc2)}
 .btn.ghost{background:var(--bg2);border:1px solid var(--line);color:var(--txt)}
 .btn.ghost:hover{border-color:var(--acc)}
+.btn.ghost.danger:hover{border-color:var(--err);color:var(--err)}
+.tabs{display:flex;gap:8px;margin-bottom:12px}
+.tabs .tab{flex:1;padding:8px;border:1px solid var(--line);background:transparent;color:var(--dim);border-radius:8px;font-size:13px}
+.tabs .tab.on{background:var(--bg2);color:var(--txt);border-color:var(--acc)}
+.qrbox{display:flex;flex-direction:column;align-items:center;gap:8px;padding:4px 0 8px}
+.qrbox img{width:180px;height:180px;border-radius:8px;background:#fff;object-fit:contain}
+.qrbox img:not([src]){opacity:.25}
 .hint{font-size:12px;color:var(--dim);margin-top:8px}
 
 /* ── 日志 ── */
@@ -121,28 +119,37 @@ textarea.yaml{width:100%;height:calc(100vh - 240px);resize:vertical;font:13px/1.
     </div>
     <div class="form" id="miCard">
       <h3>小米账号登录</h3>
-      <div class="frow" id="miStepLogin">
-        <label>账号（手机号 / 邮箱）<input id="miUser" autocomplete="username" placeholder="小米账号"></label>
-        <label>密码<input id="miPass" type="password" autocomplete="current-password" placeholder="账号密码"></label>
+      <div class="tabs">
+        <button class="tab on" data-mitab="qr">扫码登录</button>
+        <button class="tab" data-mitab="pwd">密码登录</button>
       </div>
-      <div class="frow" id="miStepVerify" style="display:none">
-        <label id="miVerifyHint">短信验证码<input id="miVerify" inputmode="numeric" placeholder="6 位验证码"></label>
+      <div id="miQrPane">
+        <div class="qrbox">
+          <img id="miQrImg" alt="登录二维码">
+          <div class="hint" id="miQrHint" style="margin-top:0">点「刷新二维码」开始扫码登录</div>
+          <button class="btn ghost" id="miQrRefresh">刷新二维码</button>
+        </div>
       </div>
-      <div class="frow" id="miStepCaptcha" style="display:none">
-        <label>图形验证码<img id="miCaptchaImg" alt="验证码" style="height:38px;border-radius:6px;display:block;margin-top:4px">
-          <input id="miCaptcha" placeholder="图中字符"></label>
-      </div>
-      <div class="acts">
-        <button class="btn" id="miLoginBtn">登录</button>
-        <span class="hint" id="miHint"></span>
+      <div id="miPwdPane" style="display:none">
+        <div class="frow" id="miStepLogin">
+          <label>账号（手机号 / 邮箱）<input id="miUser" autocomplete="username" placeholder="小米账号"></label>
+          <label>密码<input id="miPass" type="password" autocomplete="current-password" placeholder="账号密码"></label>
+        </div>
+        <div class="frow" id="miStepVerify" style="display:none">
+          <label id="miVerifyHint">短信验证码<input id="miVerify" inputmode="numeric" placeholder="6 位验证码"></label>
+        </div>
+        <div class="frow" id="miStepCaptcha" style="display:none">
+          <label>图形验证码<img id="miCaptchaImg" alt="验证码" style="height:38px;border-radius:6px;display:block;margin-top:4px">
+            <input id="miCaptcha" placeholder="图中字符"></label>
+        </div>
+        <div class="acts">
+          <button class="btn" id="miLoginBtn">登录</button>
+          <span class="hint" id="miHint"></span>
+        </div>
       </div>
       <div id="miDevices"></div>
       <div class="hint">登录一次即可，账号凭证保存在本机配置里，之后打开会自动列出摄像头，点「添加」即可接入。</div>
     </div>
-    <table>
-      <thead><tr><th style="width:180px">名称</th><th>来源</th><th style="width:90px">状态</th><th style="width:190px">操作</th></tr></thead>
-      <tbody id="stbody"><tr><td colspan="4" style="color:var(--dim)">读取中…</td></tr></tbody>
-    </table>
     <div class="form">
       <h3 id="formTitle">添加流</h3>
       <div class="frow">
@@ -552,7 +559,11 @@ function miShow(step) {
 async function miPost(params) {
   const body = new URLSearchParams(params).toString();
   const r = await fetch(API + "/xiaomi", { method: "POST", body, headers: { "Content-Type": "application/x-www-form-urlencoded" } });
-  if (r.ok) return { ok: true };
+  if (r.ok) {
+    let data = null;
+    try { data = await r.json(); } catch (e) {}
+    return { ok: true, data };
+  }
   if (r.status === 401) {
     let err = null;
     try { err = await r.json(); } catch (e) {}
@@ -560,6 +571,78 @@ async function miPost(params) {
   }
   return { ok: false, text: (await r.text()) || String(r.status) };
 }
+
+/* ── 扫码登录 ── */
+let qrTimer = null, qrBusy = false, qrT0 = 0, qrGen = 0;
+
+function qrStop() {
+  qrGen++;
+  if (qrTimer) { clearTimeout(qrTimer); qrTimer = null; }
+}
+
+async function miQrStart() {
+  qrStop();
+  const gen = qrGen;
+  $("#miQrImg").removeAttribute("src");
+  $("#miQrHint").textContent = "获取二维码…";
+  try {
+    const res = await miPost({ qr: "start" });
+    if (gen !== qrGen) return;
+    if (res.ok && res.data && res.data.qr) {
+      $("#miQrImg").src = res.data.qr;
+      $("#miQrHint").textContent = "请用米家 App 扫一扫";
+      qrT0 = Date.now();
+      qrTimer = setTimeout(() => miQrPoll(gen), 1500);
+    } else {
+      $("#miQrHint").textContent = "获取失败：" + (res.text || "请点「刷新二维码」重试");
+    }
+  } catch (e) {
+    if (gen === qrGen) $("#miQrHint").textContent = "获取失败：" + e.message;
+  }
+}
+
+async function miQrPoll(gen) {
+  if (gen !== qrGen || qrBusy) return;
+  qrBusy = true;
+  try {
+    const res = await miPost({ qr: "poll" });
+    if (gen !== qrGen) return;
+    if (res.ok && res.data && res.data.pending) {
+      if (Date.now() - qrT0 > 180000) {
+        $("#miQrHint").textContent = "二维码已超时，请点「刷新二维码」重试";
+        return;
+      }
+      qrTimer = setTimeout(() => miQrPoll(gen), 1000);
+      return;
+    }
+    qrStop();
+    if (res.ok) {
+      $("#miQrHint").textContent = "登录成功";
+      loadMiDevices();
+    } else {
+      $("#miQrHint").textContent = "登录失败：" + (res.text || "请重试");
+    }
+  } catch (e) {
+    if (gen === qrGen) $("#miQrHint").textContent = "登录失败：" + e.message;
+  } finally {
+    qrBusy = false;
+  }
+}
+
+$("#miQrRefresh").onclick = miQrStart;
+
+/* ── 登录方式选项卡 ── */
+let miTab = "qr";
+$$(".tabs .tab").forEach((t) => {
+  t.onclick = () => {
+    if (miTab === t.dataset.mitab) return;
+    miTab = t.dataset.mitab;
+    $$(".tabs .tab").forEach((x) => x.classList.toggle("on", x === t));
+    $("#miQrPane").style.display = miTab === "qr" ? "" : "none";
+    $("#miPwdPane").style.display = miTab === "pwd" ? "" : "none";
+    if (miTab === "qr") miQrStart(); else qrStop();
+  };
+});
 
 $("#miLoginBtn").onclick = async () => {
   if (Mi.busy) return;
@@ -628,10 +711,14 @@ async function loadMiDevices() {
     }
     const streams = await jget(API + "/streams");
     const existingDids = new Set();
-    for (const st of Object.values(streams)) {
+    const didName = {};
+    for (const [n, st] of Object.entries(streams)) {
       for (const p of (st.producers || [])) {
         const m = (p.url || "").match(/did=(\d+)/);
-        if (m) existingDids.add(m[1]);
+        if (m) {
+          existingDids.add(m[1]);
+          if (!didName[m[1]]) didName[m[1]] = n;
+        }
       }
     }
     let html = "";
@@ -642,13 +729,18 @@ async function loadMiDevices() {
         const added = did && existingDids.has(did);
         html += `<div class="frow" style="margin:0 0 6px;align-items:center">
           <label style="flex:1;min-width:200px;margin:0"><span class="nm">${esc(s.name)}</span><div style="font-size:11.5px;color:var(--dim)">${esc(s.info || "")}</div></label>
-          ${added ? '<span class="badge">已添加</span>' : `<button class="btn" data-src="${esc(s.url)}" data-name="${esc(s.name)}" data-did="${esc(did)}">添加</button>`}
+          ${added
+            ? `<button class="btn ghost danger" data-delname="${esc(didName[did] || "")}" data-did="${esc(did)}">删除</button>`
+            : `<button class="btn" data-src="${esc(s.url)}" data-name="${esc(s.name)}" data-did="${esc(did)}">添加</button>`}
         </div>`;
       }
     }
     box.innerHTML = html || '<div class="hint">账号下没有找到摄像头设备。</div>';
     box.querySelectorAll("button[data-src]").forEach((b) => {
       b.onclick = () => miAddStream(b, box);
+    });
+    box.querySelectorAll("button[data-delname]").forEach((b) => {
+      b.onclick = () => miDelStream(b);
     });
   } catch (e) {
     box.innerHTML = `<div class="hint" style="color:var(--err)">读取失败：${esc(e.message)}</div>`;
@@ -690,7 +782,6 @@ async function miAddStream(btn, box) {
       saveName(name, cloudName || "");
       toast("已添加 " + camName(name));
       wrap.outerHTML = '<span class="badge">已添加</span>';
-      loadStreams();
       refreshLiveCams();
     } catch (e) {
       toast("添加失败：" + e.message, true);
@@ -704,6 +795,19 @@ async function miAddStream(btn, box) {
   };
 }
 
+async function miDelStream(btn) {
+  const name = btn.dataset.delname;
+  if (!name) return;
+  if (!confirm(`确定删除「${camName(name)}」吗？会从配置文件中移除。`)) return;
+  try {
+    await api(API + "/streams?src=" + encodeURIComponent(name), { method: "DELETE" });
+    toast("已删除 " + camName(name));
+    Live.SEL.delete(name); saveSet(SEL_KEY, Live.SEL); stop(name);
+    refreshLiveCams();
+    loadMiDevices();
+  } catch (e) { toast("删除失败：" + e.message, true); }
+}
+
 async function refreshLiveCams() {
   try {
     const d = await jget(API + "/streams");
@@ -712,55 +816,8 @@ async function refreshLiveCams() {
   } catch (e) {}
 }
 
-pageInit.streams = () => { loadStreams(); loadMiDevices(); };
-async function loadStreams() {
-  const tb = $("#stbody");
-  try {
-    const d = await jget(API + "/streams");
-    const names = Object.keys(d);
-    if (!names.length) { tb.innerHTML = `<tr><td colspan="4" style="color:var(--dim)">还没有配置任何流，用下面的表单添加。</td></tr>`; return; }
-    tb.innerHTML = "";
-    for (const n of names) {
-      const st = d[n] || {};
-      const src = (st.producers || []).map((p) => p.url || p.name || "").filter(Boolean).join("<br>") || "—";
-      const cons = (st.consumers || []).length;
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td><span class="nm">${esc(camName(n))}</span><div style="font-size:11.5px;color:var(--dim)">${esc(n)}</div></td>
-        <td><span class="src">${esc(src)}</span></td>
-        <td>${cons > 0 ? `<span class="badge">播放中 ×${cons}</span>` : `<span class="badge idle">空闲</span>`}</td>
-        <td><div class="rowbtn">
-          <button data-act="preview">预览</button>
-          <button data-act="edit">编辑</button>
-          <button data-act="del" class="danger">删除</button>
-        </div></td>`;
-      tr.querySelector('[data-act="preview"]').onclick = () => {
-        Live.SEL.add(n); saveSet(SEL_KEY, Live.SEL);
-        $$("nav button").find((b) => b.dataset.p === "live").click();
-        renderChips(); renderGrid(); play(n);
-      };
-      tr.querySelector('[data-act="edit"]').onclick = () => {
-        $("#formTitle").textContent = "编辑流：" + camName(n);
-        $("#fName").value = n;
-        $("#fSrc").value = (st.producers || []).map((p) => p.url || "").find(Boolean) || "";
-        $("#fTpl").value = "";
-        $("#fName").focus();
-        window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
-      };
-      tr.querySelector('[data-act="del"]').onclick = async () => {
-        if (!confirm(`确定删除「${camName(n)}」吗？会从配置文件中移除。`)) return;
-        try {
-          await api(API + "/streams?src=" + encodeURIComponent(n), { method: "DELETE" });
-          toast("已删除 " + camName(n));
-          Live.SEL.delete(n); saveSet(SEL_KEY, Live.SEL); stop(n);
-          loadStreams();
-        } catch (e) { toast("删除失败：" + e.message, true); }
-      };
-      tb.appendChild(tr);
-    }
-  } catch (e) { tb.innerHTML = `<tr><td colspan="4" style="color:var(--err)">读取失败：${e.message}</td></tr>`; }
-}
-$("#refreshStreams").onclick = loadStreams;
+pageInit.streams = () => loadMiDevices();
+$("#refreshStreams").onclick = () => loadMiDevices();
 
 $("#fTpl").onchange = () => {
   const v = $("#fTpl").value;
@@ -778,7 +835,6 @@ $("#fSave").onclick = async () => {
     await api(`${API}/streams?name=${encodeURIComponent(name)}&src=${encodeURIComponent(src)}`, { method: "PUT" });
     toast("已保存 " + camName(name));
     $("#fReset").click();
-    loadStreams();
   } catch (e) { toast("保存失败：" + e.message, true); }
 };
 

@@ -360,10 +360,22 @@ func apiAuth(w http.ResponseWriter, r *http.Request) {
 	password := r.Form.Get("password")
 	captcha := r.Form.Get("captcha")
 	verify := r.Form.Get("verify")
+	qr := r.Form.Get("qr")
 
 	var err error
+	var qrPending bool
+	var qrInfo *xiaomi.QRLogin
 
 	switch {
+	case qr == "start":
+		auth = xiaomi.NewCloud(AppXiaomiHome)
+		qrInfo, err = auth.QRStart()
+	case qr == "poll":
+		if auth == nil {
+			http.Error(w, "qr login not started", http.StatusBadRequest)
+			return
+		}
+		qrPending, err = auth.QRPoll()
 	case username != "" || password != "":
 		auth = xiaomi.NewCloud(AppXiaomiHome)
 		err = auth.Login(username, password)
@@ -376,21 +388,6 @@ func apiAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err == nil {
-		userID, token := auth.UserToken()
-		auth = nil
-
-		cloudsMu.Lock()
-		if tokens == nil {
-			tokens = map[string]string{userID: token}
-		} else {
-			tokens[userID] = token
-		}
-		cloudsMu.Unlock()
-
-		err = app.PatchConfig([]string{"xiaomi", userID}, token)
-	}
-
 	if err != nil {
 		var login *xiaomi.LoginError
 		if errors.As(err, &login) {
@@ -400,6 +397,35 @@ func apiAuth(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", api.MimeJSON)
+
+	if qrInfo != nil {
+		_ = json.NewEncoder(w).Encode(qrInfo)
+		return
+	}
+
+	if qrPending {
+		_ = json.NewEncoder(w).Encode(map[string]bool{"pending": true})
+		return
+	}
+
+	// successful login (password flow or finished qr poll)
+	userID, token := auth.UserToken()
+	auth = nil
+
+	cloudsMu.Lock()
+	if tokens == nil {
+		tokens = map[string]string{userID: token}
+	} else {
+		tokens[userID] = token
+	}
+	cloudsMu.Unlock()
+
+	if err = app.PatchConfig([]string{"xiaomi", userID}, token); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

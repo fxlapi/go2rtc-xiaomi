@@ -2,6 +2,7 @@ package xiaomi
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/rc4"
@@ -33,6 +34,7 @@ type Cloud struct {
 	passToken string
 
 	auth map[string]string
+	qrLP string
 }
 
 func NewCloud(sid string) *Cloud {
@@ -386,6 +388,106 @@ func (c *Cloud) LoginWithToken(userID, passToken string) error {
 	c.passToken = v1.PassToken
 
 	return c.finishAuth(v1.Location)
+}
+
+// QRLogin holds the data needed to display a QR code and poll for login.
+type QRLogin struct {
+	QR       string `json:"qr"`
+	LoginURL string `json:"loginUrl"`
+	Timeout  int    `json:"timeout"`
+}
+
+// QRStart requests a QR code login session from the Xiaomi account server.
+func (c *Cloud) QRStart() (*QRLogin, error) {
+	params := url.Values{
+		"_qrsize":      {"480"},
+		"qs":           {"%3Fsid%3D" + c.sid + "%26_json%3Dtrue"},
+		"callback":     {"https://sts.api.io.mi.com/sts"},
+		"_hasLogo":     {"false"},
+		"sid":          {c.sid},
+		"serviceParam": {""},
+		"_locale":      {"en_GB"},
+		"_dc":          {strconv.FormatInt(time.Now().UnixMilli(), 10)},
+	}
+
+	res, err := c.client.Get("https://account.xiaomi.com/longPolling/loginUrl?" + params.Encode())
+	if err != nil {
+		return nil, err
+	}
+
+	var v struct {
+		QR       string `json:"qr"`
+		LoginURL string `json:"loginUrl"`
+		LP       string `json:"lp"`
+		Timeout  int    `json:"timeout"`
+	}
+	if err = readLooseJSON(res.Body, &v); err != nil {
+		return nil, err
+	}
+
+	if v.QR == "" || v.LP == "" {
+		return nil, errors.New("xiaomi: wrong qr login response")
+	}
+
+	c.qrLP = v.LP
+
+	return &QRLogin{QR: v.QR, LoginURL: v.LoginURL, Timeout: v.Timeout}, nil
+}
+
+// QRPoll performs a single long polling request. It returns true while the
+// login is still pending and false once the user has scanned the code.
+func (c *Cloud) QRPoll() (bool, error) {
+	if c.qrLP == "" {
+		return false, errors.New("xiaomi: qr login not started")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", c.qrLP, nil)
+	if err != nil {
+		return false, err
+	}
+
+	res, err := c.client.Do(req)
+	if err != nil {
+		// timeout or transient network error: keep polling
+		return true, nil
+	}
+
+	var v struct {
+		UserID    string `json:"userId"`
+		CUserID   string `json:"cUserId"`
+		Ssecurity []byte `json:"ssecurity"`
+		PassToken string `json:"passToken"`
+		Location  string `json:"location"`
+	}
+	if err = readLooseJSON(res.Body, &v); err != nil {
+		return true, nil
+	}
+
+	if v.Location == "" {
+		return true, nil
+	}
+
+	c.userID = v.UserID
+	c.ssecurity = v.Ssecurity
+	c.passToken = v.PassToken
+
+	return false, c.finishAuth(v.Location)
+}
+
+func readLooseJSON(rc io.ReadCloser, v any) error {
+	defer rc.Close()
+
+	body, err := io.ReadAll(rc)
+	if err != nil {
+		return err
+	}
+
+	body = bytes.TrimPrefix(body, []byte("&&&START&&&"))
+
+	return json.Unmarshal(body, v)
 }
 
 func (c *Cloud) UserToken() (string, string) {
