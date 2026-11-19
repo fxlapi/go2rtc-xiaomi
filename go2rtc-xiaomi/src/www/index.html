@@ -709,7 +709,8 @@ $("#miLoginBtn").onclick = async () => {
 
 /* 从 /api/config 的 YAML 文本解析 streams 段。
  * 正在播放的流在 /api/streams 里没有 producer.url，只有配置文件里的
- * 地址最可靠：每路为两空格缩进的「名字:」，下面四空格缩进的「- 地址」列表。 */
+ * 地址最可靠：每路为「名字:」加下面缩进的「- 地址」列表；
+ * 手写配置与 go2rtc 重新序列化后的缩进不同，这里按缩进自适应。 */
 async function configStreams() {
   const text = await (await fetch(API + "/config")).text();
   const out = {};
@@ -718,9 +719,9 @@ async function configStreams() {
     if (/^streams:\s*(#.*)?$/.test(line)) { inStreams = true; continue; }
     if (!inStreams) continue;
     if (/^\S/.test(line)) break; /* 顶层新键，streams 段结束 */
-    let m = line.match(/^ {2}([^ #][^:]*):\s*$/);
+    let m = line.match(/^\s{2,}([^ #\s][^:]*):\s*$/);
     if (m) { cur = m[1].trim(); out[cur] = { urls: [] }; continue; }
-    m = line.match(/^ {4}- (\S+?)\s*$/);
+    m = line.match(/^\s+- (\S+?)\s*$/);
     if (m && cur) out[cur].urls.push(m[1]);
   }
   return out;
