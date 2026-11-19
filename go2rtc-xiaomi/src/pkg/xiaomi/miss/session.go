@@ -374,6 +374,18 @@ func (s *session) retryChannelIfDead(ch uint8, quality, audio string) {
 
 // worker is the read loop that dispatches packets to streams.
 func (s *session) worker() {
+	// p29 diagnostics: periodic per-channel packet counts.
+	var c0, c1, aud uint32
+	go func() {
+		for range time.Tick(5 * time.Second) {
+			s.mu.Lock()
+			n := len(s.streams)
+			mask := s.startedMask
+			s.mu.Unlock()
+			log.Printf("[xiaomi] p29 stats: ch0=%d ch1=%d audio=%d streams=%d startedMask=%d",
+				c0, c1, aud, n, mask)
+		}
+	}()
 	for {
 		_ = s.client.SetDeadline(time.Now().Add(10 * time.Second))
 
@@ -381,6 +393,14 @@ func (s *session) worker() {
 		if err != nil {
 			s.shutdown()
 			return
+		}
+
+		if isAudioCodec(pkt.CodecID) {
+			aud++
+		} else if pkt.Channel == 1 {
+			c1++
+		} else {
+			c0++
 		}
 
 		s.dispatch(pkt)
