@@ -1,12 +1,18 @@
 package xiaomi
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -19,15 +25,126 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// tokenEncPrefix marks an encrypted Mi Home pass token stored in the config.
+// The AES-256-GCM key lives in a separate hidden file next to the config
+// (never inside the config itself), so a config file that is shared, backed
+// up or pasted for support does not leak the account token. Plaintext tokens
+// from older versions keep working and are re-encrypted on next login.
+const tokenEncPrefix = "ENC:"
+
+func tokenKeyPath() string {
+	if app.ConfigPath == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(app.ConfigPath), ".xiaomi_key")
+}
+
+func loadTokenKey() ([]byte, error) {
+	p := tokenKeyPath()
+	if p == "" {
+		return nil, errors.New("xiaomi: config path unknown, can't load token key")
+	}
+	if key, err := os.ReadFile(p); err == nil && len(key) == 32 {
+		return key, nil
+	}
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(p, key, 0600); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+func encryptToken(plain string) (string, error) {
+	key, err := loadTokenKey()
+	if err != nil {
+		return "", err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return "", err
+	}
+	sealed := gcm.Seal(nonce, nonce, []byte(plain), nil)
+	return tokenEncPrefix + base64.StdEncoding.EncodeToString(sealed), nil
+}
+
+func decryptToken(stored string) (string, error) {
+	data, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(stored, tokenEncPrefix))
+	if err != nil {
+		return "", err
+	}
+	key, err := loadTokenKey()
+	if err != nil {
+		return "", err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	plain, err := gcm.Open(nil, data[:gcm.NonceSize()], data[gcm.NonceSize():], nil)
+	if err != nil {
+		return "", err
+	}
+	return string(plain), nil
+}
+
 func Init() {
 	var v struct {
 		Cfg map[string]string `yaml:"xiaomi"`
 	}
 	app.LoadConfig(&v)
 
+	// Decrypt tokens stored in encrypted form; plaintext tokens from older
+	// versions keep working as-is.
+	if v.Cfg != nil {
+		for userID, stored := range v.Cfg {
+			if !strings.HasPrefix(stored, tokenEncPrefix) {
+				continue
+			}
+			plain, err := decryptToken(stored)
+			if err != nil {
+				log.Warn().Err(err).Msg("[xiaomi] failed to decrypt stored token")
+				continue
+			}
+			v.Cfg[userID] = plain
+		}
+	}
+
 	tokens = v.Cfg
 
 	log = app.GetLogger("xiaomi")
+
+	// Upgrade plaintext tokens to encrypted storage on startup so existing
+	// users don't need to log in again.
+	for userID, stored := range tokens {
+		if stored == "" || strings.HasPrefix(stored, tokenEncPrefix) {
+			continue
+		}
+		enc, err := encryptToken(stored)
+		if err != nil {
+			log.Warn().Err(err).Msg("[xiaomi] token encryption upgrade failed")
+			continue
+		}
+		if err := app.PatchConfig([]string{"xiaomi", userID}, enc); err != nil {
+			log.Warn().Err(err).Msg("[xiaomi] token encryption upgrade write failed")
+			continue
+		}
+		log.Info().Msg("[xiaomi] stored token upgraded to encrypted form")
+	}
 
 	streams.HandleFunc("xiaomi", func(rawURL string) (core.Producer, error) {
 		u, err := url.Parse(rawURL)
@@ -425,7 +542,14 @@ func apiAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	cloudsMu.Unlock()
 
-	if err = app.PatchConfig([]string{"xiaomi", userID}, token); err != nil {
+	// Store the token encrypted; the plaintext never touches the config file.
+	stored, err := encryptToken(token)
+	if err != nil {
+		log.Warn().Err(err).Msg("[xiaomi] token encryption failed, storing plaintext")
+		stored = token
+	}
+
+	if err = app.PatchConfig([]string{"xiaomi", userID}, stored); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
