@@ -179,20 +179,42 @@ func (s *session) startMedia(channel uint8, quality, audio string) error {
 
 	// If the other channel is already started, upgrade to dual-channel.
 	if s.startedMask&(1<<other) != 0 {
-		// CW501D field tests (2026-11-19 15:47-15:55, p21 regression):
-		// the single-channel command for channel 1 (videoquality:-1) STOPS
-		// channel 0's video entirely. The dual-channel command is the only
-		// command that adds a channel in either direction. The joining
-		// channel's video may start with ~20s of broken HEVC (missing
-		// reference frames) before valid frames arrive; the probe deadline
-		// is extended (producer.go) to cover that period.
+		// CW501D field tests (2026-11-19 14:10-16:34, p20/p21/p23):
+		//
+		// - ch1 playing + dual command -> ch0 joins fine (only verified
+		//   way to add ch0). ch0 shows ~20s of broken HEVC (missing
+		//   reference frames) before valid frames; the probe deadline is
+		//   extended (producer.go) to cover that.
+		// - ch0 playing + dual command -> ch1 NEVER joins (probe times
+		//   out even at 35s). The dual command alone cannot add ch1 in
+		//   this direction.
+		// - ch0 playing + single "1" command (videoquality:-1) -> ch0
+		//   video STOPS, ch1 starts. The session survives the gap.
+		//
+		// Hence the three-step dance for ch1 joining while ch0 plays:
+		// single "1" (stops ch0, starts ch1) -> wait for ch1 to produce
+		// frames -> dual command (the only verified way to add ch0 back).
+		if ch == 1 {
+			if err := s.client.StartMedia("1", quality, audio); err != nil {
+				return err
+			}
+			// ch0 video is stopped by the single command; only ch1 is
+			// live until the dual command below re-adds it.
+			s.quality[1] = quality
+			s.startedMask = 1 << 1
+			// Wait WITHOUT holding the lock: dispatch takes s.mu on
+			// every packet, and a held lock would stall the reader.
+			s.mu.Unlock()
+			time.Sleep(3 * time.Second)
+			s.mu.Lock()
+		}
 		err := s.client.StartMediaDual(
 			s.quality[0], s.quality[1], audio,
 		)
 		if err != nil {
 			return err
 		}
-		s.startedMask |= 1 << ch
+		s.startedMask |= 1<<0 | 1<<1
 		return nil
 	}
 
