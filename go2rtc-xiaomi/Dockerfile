@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:labs
 
 # 基于 AlexxIT/go2rtc 官方 docker/Dockerfile 改造：
 # 构建上下文为本插件目录，源码位于 src/ 子目录（含全部补丁）。
