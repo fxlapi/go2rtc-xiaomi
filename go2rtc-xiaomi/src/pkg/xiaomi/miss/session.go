@@ -42,6 +42,7 @@ type stream struct {
 	closeOnce sync.Once
 	deadline  atomic.Value // time.Time
 	done      chan struct{}
+	gotVideo  atomic.Bool // set when a video packet has been pushed
 }
 
 var (
@@ -142,8 +143,6 @@ func (s *session) openStream(channel uint8) *stream {
 // sends a dual-channel command.
 func (s *session) startMedia(channel uint8, quality, audio string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	ch := int(channel)
 	if ch > 1 {
 		ch = 0
@@ -151,20 +150,49 @@ func (s *session) startMedia(channel uint8, quality, audio string) error {
 
 	// Already started this channel.
 	if s.startedMask&(1<<ch) != 0 {
+		s.mu.Unlock()
 		return nil
 	}
 
 	s.quality[ch] = quality
 	other := ch ^ 1
+	otherStarted := s.startedMask&(1<<other) != 0
+	s.mu.Unlock()
+
+	// Serialize media starts. The camera treats each video-start command as a
+	// FULL media config, so two commands arriving within milliseconds (page
+	// auto-play starts both lenses at once) can clobber each other. When the
+	// other channel has been started, wait until it is actually delivering
+	// video before touching the media config again.
+	if otherStarted {
+		s.awaitChannelVideo(uint8(other), 8*time.Second)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Re-check after waiting: the other dial may have started us meanwhile.
+	if s.startedMask&(1<<ch) != 0 {
+		return nil
+	}
+	s.quality[ch] = quality
 
 	// If the other channel is already started, upgrade to dual-channel.
 	if s.startedMask&(1<<other) != 0 {
-		// On a single connection the camera treats the video-start command
-		// as the FULL media config: the single-channel command for lens 2
-		// (videoquality:-1) turns lens 1 off, no matter when it arrives.
-		// The dual-channel command carries both qualities and keeps both
-		// lenses streaming on this connection (verified on CW501D with
-		// subtype=hd, both start orders and simultaneous start).
+		if ch == 1 {
+			// CW501D firmware quirk (field-tested 2026-11-19, p20 regression):
+			// the dual-channel command only ADDS channel 0 to an already
+			// running channel-1 stream. When channel 0 is the one already
+			// streaming, the dual command does NOT start channel 1 (probe
+			// times out with "no video"). Channel 1 must be started with its
+			// own single-channel command (videoquality:-1 leaves channel 0
+			// unchanged); the camera then multiplexes both on this connection.
+			if err := s.client.StartMedia("1", quality, audio); err != nil {
+				return err
+			}
+			s.startedMask |= 1 << ch
+			return nil
+		}
 		err := s.client.StartMediaDual(
 			s.quality[0], s.quality[1], audio,
 		)
@@ -185,6 +213,24 @@ func (s *session) startMedia(channel uint8, quality, audio string) error {
 	}
 	s.startedMask |= 1 << ch
 	return nil
+}
+
+// awaitChannelVideo waits until some stream of the given channel has received
+// a video packet, or until the timeout elapses. Returns true if video was seen.
+func (s *session) awaitChannelVideo(ch uint8, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		s.mu.Lock()
+		for st := range s.streams {
+			if st.channel == ch && st.gotVideo.Load() {
+				s.mu.Unlock()
+				return true
+			}
+		}
+		s.mu.Unlock()
+		time.Sleep(200 * time.Millisecond)
+	}
+	return false
 }
 
 // worker is the read loop that dispatches packets to streams.
@@ -367,6 +413,9 @@ func (st *stream) Close() error {
 }
 
 func (st *stream) push(pkt *Packet) {
+	if !isAudioCodec(pkt.CodecID) {
+		st.gotVideo.Store(true)
+	}
 	select {
 	case <-st.done:
 		return
