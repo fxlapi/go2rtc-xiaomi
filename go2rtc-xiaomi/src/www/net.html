@@ -9,6 +9,8 @@
         html, body, #network {
             height: 100%;
         }
+
+        #network { flex: 1; }
     </style>
 </head>
 <body>
@@ -25,10 +27,15 @@
         const container = document.getElementById('network');
         const options = {
             edges: {
-                font: {align: 'middle'},
+                font: {align: 'middle', color: '#8b93a7'},
+                color: '#3a4252',
                 smooth: false,
             },
-            nodes: {shape: 'box'},
+            nodes: {
+                shape: 'box',
+                color: {background: '#1b2029', border: '#262c38'},
+                font: {color: '#e8ebf1', size: 14},
+            },
             physics: false,
         };
 

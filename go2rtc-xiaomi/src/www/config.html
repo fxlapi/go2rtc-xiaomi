@@ -116,8 +116,7 @@
 
         ensureYamlLanguage();
 
-        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-        monaco.editor.setTheme(prefersDark ? 'vs-dark' : 'vs');
+        monaco.editor.setTheme('vs-dark');
 
         const editor = monaco.editor.create(container, {
             language: 'yaml',
