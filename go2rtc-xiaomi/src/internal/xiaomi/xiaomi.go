@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/AlexxIT/go2rtc/internal/api"
 	"github.com/AlexxIT/go2rtc/internal/app"
@@ -255,27 +256,52 @@ func dialCamera(rawURL string) (core.Producer, error) {
 		cam.mux = nil
 	}
 
-	if rawURL, err = resolveURL(u, rawURL); err != nil {
-		return nil, err
-	}
-	log.Debug().Msgf("xiaomi: dial miss %s", rawURL)
+	cacheKey := cameraKey(u)
 
-	if !strings.Contains(rawURL, "vendor") {
-		return dialDirect(rawURL)
+	var dialFresh func() (core.Producer, error)
+	dialFresh = func() (core.Producer, error) {
+		freshURL, err := resolveURL(u, rawURL)
+		if err != nil {
+			return nil, err
+		}
+		log.Debug().Msgf("xiaomi: dial miss %s", freshURL)
+
+		if !strings.Contains(freshURL, "vendor") {
+			return dialDirect(freshURL)
+		}
+
+		mux, err := openMissMux(freshURL)
+		if err != nil {
+			return nil, err
+		}
+		prod, err := mux.Open(freshURL)
+		if err != nil {
+			_ = mux.Close()
+			return nil, err
+		}
+		cam.mux = mux
+		return prod, nil
 	}
 
-	mux, err := openMissMux(rawURL)
-	if err != nil {
-		return nil, err
+	prod, err := dialFresh()
+	if isMissAuthErr(err) {
+		// Device rejected the auth handshake, most likely because the cached
+		// sign/key went stale after the device reconnected. Drop the cached
+		// credentials and retry once with a fresh pair from the cloud, instead
+		// of staying broken until the addon is restarted manually.
+		dropMissCred(cacheKey)
+		cam.mux = nil
+		log.Warn().Err(err).Msg("[xiaomi] miss auth rejected; dropping cached credentials and retrying")
+		prod, err = dialFresh()
 	}
-	prod, err := mux.Open(rawURL)
-	if err != nil {
-		_ = mux.Close()
-		return nil, err
-	}
-	cam.mux = mux
-	return prod, nil
+	return prod, err
 }
+
+// missCredTTL bounds how long cached MISS credentials stay valid in memory.
+// Camera session keys/signs can go stale after the device reconnects or its
+// cloud session refreshes; re-fetching them periodically avoids relying on an
+// old credential that the device will reject at auth time.
+const missCredTTL = 6 * time.Hour
 
 // missCred caches MISS authentication credentials so the second channel of a
 // dual-channel camera can skip the cloud API call.
@@ -286,10 +312,27 @@ type missCred struct {
 	sign          string
 	vendor        string
 	uid           string // only for TUTK
+	expire        time.Time
 }
 
 var missCreds = map[string]missCred{}
 var missCredsMu sync.Mutex
+
+// dropMissCred invalidates the cached credentials for one camera (did), so the
+// next dial re-fetches a fresh sign/key pair from the cloud.
+func dropMissCred(cacheKey string) {
+	missCredsMu.Lock()
+	delete(missCreds, cacheKey)
+	missCredsMu.Unlock()
+}
+
+// isMissAuthErr reports whether a dial failure is a device-side authentication
+// rejection (miss login returns "miss: auth: {\"result\":\"failed\",...}").
+// Such failures point to a stale/unaccepted credential rather than a network
+// problem, so the cached credential should be discarded and retried.
+func isMissAuthErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "miss: auth:")
+}
 
 func getCloud(userID string) (*xiaomi.Cloud, error) {
 	cloudsMu.Lock()
@@ -392,7 +435,7 @@ func getMissURL(url *url.URL) (string, error) {
 	// camera can reuse the same credentials without a cloud API call.
 	cacheKey := url.User.Username() + ":" + region + ":" + query.Get("did")
 	missCredsMu.Lock()
-	if cred, ok := missCreds[cacheKey]; ok {
+	if cred, ok := missCreds[cacheKey]; ok && time.Now().Before(cred.expire) {
 		missCredsMu.Unlock()
 		query.Set("client_public", cred.clientPublic)
 		query.Set("client_private", cred.clientPrivate)
@@ -404,6 +447,9 @@ func getMissURL(url *url.URL) (string, error) {
 		}
 		url.RawQuery = query.Encode()
 		return url.String(), nil
+	} else if ok {
+		// cached credential expired: drop it and re-fetch from the cloud below
+		delete(missCreds, cacheKey)
 	}
 	missCredsMu.Unlock()
 
@@ -464,6 +510,7 @@ func getMissURL(url *url.URL) (string, error) {
 		sign:          v.Sign,
 		vendor:        vendor,
 		uid:           uid,
+		expire:        time.Now().Add(missCredTTL),
 	}
 	missCredsMu.Unlock()
 
