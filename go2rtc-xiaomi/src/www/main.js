@@ -28,6 +28,7 @@ header {
     background: rgba(15,17,21,.92);
     backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--line);
+    padding-top: env(safe-area-inset-top, 0px);
 }
 
 nav {

@@ -1,4 +1,8 @@
 
+## 1.9.15-p46 (2026-11-20)
+
+- 修复手机全屏打开原版后台页时，顶部导航被系统状态栏遮挡的问题：顶栏按安全区（safe-area-inset-top）留出顶部间距，各后台页 viewport 开启 `viewport-fit=cover`。
+
 ## 1.9.15-p45 (2026-11-20)
 
 - 官方原版前端（classic/add/config/links/log/net/stream/hls/webrtc 等）在不改变任何功能的前提下适配手机窄屏。
