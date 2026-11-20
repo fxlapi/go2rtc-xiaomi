@@ -20,17 +20,23 @@ input:focus,select:focus,textarea:focus{border-color:var(--acc)}
 
 /* ── 顶栏 ── */
 header{position:sticky;top:0;z-index:20;background:rgba(15,17,21,.92);backdrop-filter:blur(8px);
-  border-bottom:1px solid var(--line);padding:0 18px;display:flex;align-items:center;gap:18px;height:52px}
-.brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:15px;white-space:nowrap}
+  border-bottom:1px solid var(--line);padding:0 18px;display:flex;align-items:center;gap:14px;height:52px}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:15px;white-space:nowrap;flex:0 0 auto}
 .brand .dot{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 6px var(--ok)}
 .brand .dot.off{background:var(--err);box-shadow:none}
-nav{display:flex;gap:4px;flex:1}
-nav button{padding:7px 14px;border-radius:8px;color:var(--dim);font-size:13.5px}
+nav{display:flex;gap:4px;flex:1;min-width:0;overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none}
+nav::-webkit-scrollbar{display:none}
+nav button{flex:0 0 auto;white-space:nowrap;padding:7px 14px;border-radius:8px;color:var(--dim);font-size:13.5px}
 nav button:hover{color:var(--txt);background:var(--bg2)}
 nav button.on{color:var(--txt);background:var(--card);font-weight:500}
-nav a.navlink{padding:7px 14px;border-radius:8px;color:var(--dim);font-size:13.5px;text-decoration:none;display:inline-flex;align-items:center}
+nav a.navlink{flex:0 0 auto;white-space:nowrap;padding:7px 14px;border-radius:8px;color:var(--dim);font-size:13.5px;text-decoration:none;display:inline-flex;align-items:center}
 nav a.navlink:hover{color:var(--txt);background:var(--bg2)}
-.ver{font-size:12px;color:var(--dim);white-space:nowrap}
+
+@media (max-width:600px){
+  header{padding:0 12px;gap:10px;height:48px}
+  .brand{font-size:14px;gap:7px}
+  nav button,nav a.navlink{padding:6px 10px;font-size:13px}
+}
 
 main{max-width:1500px;margin:0 auto;padding:16px 18px 40px}
 .page{display:none}.page.on{display:block}
@@ -114,7 +120,6 @@ textarea.yaml{width:100%;height:calc(100vh - 240px);resize:vertical;font:13px/1.
     <button data-p="cfg">配置</button>
     <a class="navlink" href="classic.html" target="_blank" title="go2rtc 官方原版界面">原版界面</a>
   </nav>
-  <div class="ver" id="ver"></div>
 </header>
 <main>
   <section class="page on" id="p-live">
@@ -1027,9 +1032,7 @@ $("#cfgReload").onclick = loadConfig;
 /* ─────────── 启动 ─────────── */
 (async () => {
   try {
-    const info = await jget(API);
-    $("#ver").textContent = "v" + (info.version || "").split("+")[0].trim();
-    $("#ver").title = info.config_path || "";
+    await jget(API);
   } catch (e) { $("#hdot").classList.add("off"); }
   pageInit.live();
 })();
