@@ -304,7 +304,7 @@ $$("nav button").forEach((b) => {
 /* ─────────── 画面页 ─────────── */
 const Live = {
   CAMS: [], SEL: loadSet(SEL_KEY), ORDER: loadArr(ORDER_KEY),
-  PLAYERS: {}, RETRIES: {}, MODE: loadMode(),
+  PLAYERS: {}, RETRIES: {}, MODE: loadMode(), RTC_FALLBACK: new Set(),
   orderedSel() {
     const out = this.ORDER.filter((n) => this.SEL.has(n));
     for (const n of this.SEL) if (!out.includes(n)) out.push(n);
@@ -428,6 +428,7 @@ function switchMode(name) {
   const next = Live.MODE === "webrtc" ? "mse" : "webrtc";
   Live.MODE = next;
   saveMode(next);
+  if (next === "webrtc") Live.RTC_FALLBACK.delete(name); /* 手动切回 RTC，解除自动回退标记 */
   $$(".tile .mode").forEach((b) => { b.textContent = next === "webrtc" ? "RTC" : "MSE"; });
   stop(name);
   play(name);
@@ -439,11 +440,11 @@ async function play(name) {
   if (!tile) return;
   const video = tile.querySelector("video");
 
-  const mode = (Live.MODE === "webrtc" && RTC_SUPPORTED) ? "webrtc" : "mse";
+  const mode = (Live.MODE === "webrtc" && RTC_SUPPORTED && !Live.RTC_FALLBACK.has(name)) ? "webrtc" : "mse";
   const player = {
     ws: null, ms: null, sb: null, objUrl: null, buf: null, bufLen: 0,
     stopped: false, timer: null, lastAppend: 0, watchdog: null,
-    mode, pc: null, rtcStream: null, rtcTimer: null, rtcConnected: false,
+    mode, pc: null, rtcStream: null, rtcTimer: null, rtcVideoTimer: null, rtcConnected: false,
   };
   Live.PLAYERS[name] = player;
 
@@ -453,6 +454,18 @@ async function play(name) {
     el.textContent = msg;
   };
   const clearErr = () => { const el = tile.querySelector(".err"); if (el) el.remove(); };
+
+  /* RTC 出不了画面（仅音频/黑屏/无视频轨道）时自动回退 MSE；
+     仅本次会话对该流生效，不写入用户手动偏好。 */
+  const fallbackToMSE = (msg) => {
+    if (player.stopped) return;
+    Live.RTC_FALLBACK.add(name);
+    showErr(msg);
+    try { video.srcObject = null; } catch (e) {}
+    destroyPlayer(player);
+    delete Live.PLAYERS[name];
+    play(name);
+  };
 
   const feed = (data) => {
     const sb = player.sb;
@@ -583,6 +596,23 @@ async function play(name) {
         video.play().catch(() => {});
         Live.RETRIES[name] = 0;
         clearErr();
+
+        /* 兜底：确认 RTC 真解出视频帧。仅音频/黑屏（如浏览器 WebRTC 解不了 H.265）时自动回退 MSE */
+        const vTrack = player.rtcStream.getVideoTracks()[0];
+        if (!vTrack) {
+          setTimeout(() => fallbackToMSE("WebRTC 未协商到视频轨道，已自动切换 MSE"), 300);
+          return;
+        }
+        let gotFrame = false;
+        const checkFrame = () => { if (video.videoWidth > 0) gotFrame = true; };
+        video.addEventListener("timeupdate", checkFrame);
+        video.addEventListener("loadeddata", checkFrame);
+        player.rtcVideoTimer = setTimeout(() => {
+          video.removeEventListener("timeupdate", checkFrame);
+          video.removeEventListener("loadeddata", checkFrame);
+          if (player.stopped || gotFrame || video.videoWidth > 0) return;
+          fallbackToMSE("WebRTC 无法解码画面（可能为 H.265），已自动切换 MSE");
+        }, 6000);
       } else if (st === "failed") {
         showErr("WebRTC 连接失败，可点右上角切 MSE");
         try { pc.close(); } catch (e) {}
@@ -666,6 +696,7 @@ function destroyPlayer(p) {
   if (p.timer) { clearTimeout(p.timer); p.timer = null; }
   if (p.watchdog) { clearInterval(p.watchdog); p.watchdog = null; }
   if (p.rtcTimer) { clearTimeout(p.rtcTimer); p.rtcTimer = null; }
+  if (p.rtcVideoTimer) { clearTimeout(p.rtcVideoTimer); p.rtcVideoTimer = null; }
   if (p.ws) { try { p.ws.close(); } catch (e) {} p.ws = null; }
   if (p.pc) {
     try {
