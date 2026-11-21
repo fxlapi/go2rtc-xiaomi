@@ -1,4 +1,11 @@
 
+## 1.9.15-p47 (2026-11-21)
+
+- 定制面板播放页新增 **WebRTC / MSE 播放方式切换**：每路画面右上角按钮在 RTC ⇄ MSE 间切换，选择记入浏览器本地偏好，新打开的流跟随。
+- 默认走 **WebRTC**（低延迟，缓解 MSE 缓冲卡顿）；浏览器不支持 WebRTC 时自动回退 MSE。
+- WebRTC 复用 go2rtc 标准 `/api/ws` 协商（`webrtc/offer` → `webrtc/answer` / `webrtc/candidate`）；原 MSE 通道完整保留作为兼容兜底。
+- RTC 连接失败或 15 秒未建立时给出提示，可手动切回 MSE；不自动回退，避免两条通道来回跳。
+
 ## 1.9.15-p46 (2026-11-20)
 
 - 修复手机全屏打开原版后台页时，顶部导航被系统状态栏遮挡的问题：顶栏按安全区（safe-area-inset-top）留出顶部间距，各后台页 viewport 开启 `viewport-fit=cover`。

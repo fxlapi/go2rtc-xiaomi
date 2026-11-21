@@ -59,6 +59,7 @@ main{max-width:1500px;margin:0 auto;padding:16px 18px 40px}
   padding:3px 9px;border-radius:6px;pointer-events:none}
 .tile .tools{position:absolute;right:8px;top:8px;display:flex;gap:6px}
 .tile .tools button{background:rgba(0,0,0,.55);color:#fff;border-radius:6px;width:28px;height:28px;font-size:14px;line-height:1}
+.tile .tools button.mode{width:auto;padding:0 8px;font-size:11.5px;font-weight:600}
 .tile .tools button:hover{background:rgba(0,0,0,.85)}
 .tile .err{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   color:var(--warn);font-size:13px;text-align:center;padding:12px;background:rgba(0,0,0,.7)}
@@ -217,7 +218,7 @@ textarea.yaml{width:100%;height:calc(100vh - 240px);resize:vertical;font:13px/1.
 <script>
 "use strict";
 /* go2rtc (xiaomi) 整合界面 — 打开即播放
- * 画面页：MSE over WebSocket 直连 go2rtc /api/ws（与官方 stream.html 同协议）
+ * 画面页：经 WebSocket 直连 go2rtc /api/ws，支持 WebRTC（默认，低延迟）与 MSE（兼容兜底）两种播放方式，瓦片右上角可切换
  * 流管理：/api/streams 增删改（写入配置文件）
  * 日志：/api/log 轮询；配置：/api/config 读写 */
 
@@ -230,6 +231,16 @@ const API = BASE + "api";
 
 const SEL_KEY = "g2panel.live.sel";
 const ORDER_KEY = "g2panel.live.order";
+/* 播放方式偏好：webrtc（低延迟，不易卡）/ mse（兼容兜底） */
+const MODE_KEY = "g2panel.live.mode";
+const RTC_SUPPORTED = "RTCPeerConnection" in window;
+const loadMode = () => {
+  const m = localStorage.getItem(MODE_KEY);
+  if (m === "mse") return "mse";
+  if (m === "webrtc" && RTC_SUPPORTED) return "webrtc";
+  return RTC_SUPPORTED ? "webrtc" : "mse";
+};
+const saveMode = (m) => { try { localStorage.setItem(MODE_KEY, m); } catch (e) {} };
 /* 显示名：优先浏览器本地保存的米家名称（同步或一键添加时写入），否则显示原流名 */
 const camName = (k) => loadNames()[k] || k;
 /* 流名 → 中文显示名（一键添加时保存，仅用于界面显示，不写入配置） */
@@ -255,6 +266,12 @@ const MSE_CODECS = (() => {
     catch (e) { return false; }
   }).join();
 })();
+
+const RTC_CONFIG = {
+  bundlePolicy: "max-bundle",
+  iceServers: [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }],
+  sdpSemantics: "unified-plan",
+};
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 function toast(msg, isErr) {
@@ -286,7 +303,7 @@ $$("nav button").forEach((b) => {
 /* ─────────── 画面页 ─────────── */
 const Live = {
   CAMS: [], SEL: loadSet(SEL_KEY), ORDER: loadArr(ORDER_KEY),
-  PLAYERS: {}, RETRIES: {},
+  PLAYERS: {}, RETRIES: {}, MODE: loadMode(),
   orderedSel() {
     const out = this.ORDER.filter((n) => this.SEL.has(n));
     for (const n of this.SEL) if (!out.includes(n)) out.push(n);
@@ -349,6 +366,7 @@ function renderGrid() {
         <video muted playsinline autoplay></video>
         <div class="lbl"></div>
         <div class="tools">
+          <button class="mode" title="切换 WebRTC / MSE 播放方式">RTC</button>
           <button class="mute" title="静音 / 取消静音">🔇</button>
           <button class="close" title="停止播放">×</button>
         </div>`;
@@ -357,6 +375,8 @@ function renderGrid() {
     /* 标签实时跟随显示名（米家同步后自动更新） */
     const lbl = tile.querySelector(".lbl");
     if (lbl) lbl.textContent = camName(n);
+    const mb = tile.querySelector(".mode");
+    if (mb) mb.textContent = Live.MODE === "webrtc" ? "RTC" : "MSE";
     grid.appendChild(tile);
     const v = tile.querySelector("video");
     if (v && Live.PLAYERS[n]) v.play().catch(() => {});
@@ -399,6 +419,17 @@ function wireTile(tile, n) {
     Live.SEL.delete(n); saveSet(SEL_KEY, Live.SEL);
     stop(n); renderChips(); renderGrid();
   };
+  tile.querySelector(".mode").onclick = () => switchMode(n);
+}
+
+/* 切换该流（并同步全局偏好）的播放方式：WebRTC ⇄ MSE，重建播放器 */
+function switchMode(name) {
+  const next = Live.MODE === "webrtc" ? "mse" : "webrtc";
+  Live.MODE = next;
+  saveMode(next);
+  $$(".tile .mode").forEach((b) => { b.textContent = next === "webrtc" ? "RTC" : "MSE"; });
+  stop(name);
+  play(name);
 }
 
 async function play(name) {
@@ -407,7 +438,12 @@ async function play(name) {
   if (!tile) return;
   const video = tile.querySelector("video");
 
-  const player = { ws: null, ms: null, sb: null, objUrl: null, buf: null, bufLen: 0, stopped: false, timer: null, lastAppend: 0, watchdog: null };
+  const mode = (Live.MODE === "webrtc" && RTC_SUPPORTED) ? "webrtc" : "mse";
+  const player = {
+    ws: null, ms: null, sb: null, objUrl: null, buf: null, bufLen: 0,
+    stopped: false, timer: null, lastAppend: 0, watchdog: null,
+    mode, pc: null, rtcStream: null, rtcTimer: null, rtcConnected: false,
+  };
   Live.PLAYERS[name] = player;
 
   const showErr = (msg) => {
@@ -475,6 +511,104 @@ async function play(name) {
     clearErr();
   };
 
+  /* ── MSE 通道 ── */
+  const startMSE = () => {
+    const ms = new MediaSource();
+    player.ms = ms;
+    ms.addEventListener("sourceopen", () => {
+      if (player.stopped || !player.ws || player.ws.readyState > 1) return;
+      try { player.ws.send(JSON.stringify({ type: "mse", value: MSE_CODECS })); } catch (e) {}
+    }, { once: true });
+    player.objUrl = URL.createObjectURL(ms);
+    video.src = player.objUrl;
+    video.play().catch(() => {});
+    showErr("连接中…");
+  };
+
+  const onMSEMessage = (msg) => {
+    if (msg.type === "mse" && msg.value) onMime(msg.value);
+    else if (msg.type === "error") {
+      const val = msg.value || "未知";
+      if (/codecs not matched/i.test(val) && /265|hevc|hvc/i.test(val)) {
+        /* 浏览器解不了 H.265：重试无意义，给出明确指引 */
+        showErr("该摄像头输出 H.265 画面，当前浏览器不支持解码。请改用 Edge 浏览器，或为 Chrome 安装 HEVC 支持后刷新。");
+      } else {
+        showErr("流错误：" + val);
+        scheduleReconnect(name, player);
+      }
+    }
+  };
+
+  /* ── WebRTC 通道 ── */
+  const onRTCMessage = (msg) => {
+    if (msg.type === "webrtc/answer") {
+      if (player.pc) player.pc.setRemoteDescription({ type: "answer", sdp: msg.value }).catch((e) => console.warn(e));
+    } else if (msg.type === "webrtc/candidate") {
+      if (player.pc) player.pc.addIceCandidate({ candidate: msg.value, sdpMid: "0" }).catch((e) => console.warn(e));
+    } else if (msg.type === "error") {
+      const val = msg.value || "未知";
+      if (/codecs not matched/i.test(val) && /265|hevc|hvc/i.test(val)) {
+        showErr("该摄像头输出 H.265，当前浏览器 WebRTC 解码失败，可点右上角切 MSE 试试。");
+      } else {
+        showErr("流错误：" + val);
+        scheduleReconnect(name, player);
+      }
+    }
+  };
+
+  const startRTC = () => {
+    let pc;
+    try { pc = new RTCPeerConnection(RTC_CONFIG); }
+    catch (e) { showErr("浏览器不支持 WebRTC：" + e); scheduleReconnect(name, player); return; }
+    player.pc = pc;
+    player.rtcConnected = false;
+
+    pc.addEventListener("icecandidate", (ev) => {
+      if (ev.candidate && player.ws && player.ws.readyState === 1) {
+        try { player.ws.send(JSON.stringify({ type: "webrtc/candidate", value: ev.candidate.toJSON().candidate })); } catch (e) {}
+      }
+    });
+
+    pc.addEventListener("connectionstatechange", () => {
+      const st = pc.connectionState;
+      if (st === "connected") {
+        player.rtcConnected = true;
+        if (player.rtcTimer) { clearTimeout(player.rtcTimer); player.rtcTimer = null; }
+        const tracks = pc.getTransceivers()
+          .filter((t) => t.currentDirection === "recvonly")
+          .map((t) => t.receiver.track).filter(Boolean);
+        player.rtcStream = new MediaStream(tracks);
+        video.srcObject = player.rtcStream;
+        video.play().catch(() => {});
+        Live.RETRIES[name] = 0;
+        clearErr();
+      } else if (st === "failed") {
+        showErr("WebRTC 连接失败，可点右上角切 MSE");
+        try { pc.close(); } catch (e) {}
+        if (player.pc === pc) player.pc = null;
+        scheduleReconnect(name, player);
+      } else if (st === "disconnected") {
+        showErr("WebRTC 已断开，重连中…");
+      }
+    });
+
+    pc.addTransceiver("video", { direction: "recvonly" });
+    pc.addTransceiver("audio", { direction: "recvonly" });
+
+    pc.createOffer()
+      .then((offer) => pc.setLocalDescription(offer))
+      .then(() => {
+        if (player.stopped || !player.ws || player.ws.readyState !== 1) return;
+        try { player.ws.send(JSON.stringify({ type: "webrtc/offer", value: pc.localDescription.sdp })); } catch (e) {}
+      })
+      .catch((e) => showErr("WebRTC 协商失败：" + e));
+
+    /* 15 秒未连上：提示可切 MSE（不自动回退，避免两条通道来回跳） */
+    player.rtcTimer = setTimeout(() => {
+      if (!player.rtcConnected && !player.stopped) showErr("WebRTC 建立超时，可点右上角切 MSE");
+    }, 15000);
+  };
+
   const connect = () => {
     if (player.stopped || !Live.SEL.has(name)) return;
     const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + BASE + "api/ws?src=" + encodeURIComponent(name);
@@ -485,42 +619,22 @@ async function play(name) {
 
     ws.onopen = () => {
       if (player.stopped) return;
-      const ms = new MediaSource();
-      player.ms = ms;
-      ms.addEventListener("sourceopen", () => {
-        if (player.stopped || !player.ws || player.ws.readyState > 1) return;
-        try { player.ws.send(JSON.stringify({ type: "mse", value: MSE_CODECS })); } catch (e) {}
-      }, { once: true });
-      player.objUrl = URL.createObjectURL(ms);
-      video.src = player.objUrl;
-      video.play().catch(() => {});
       showErr("连接中…");
-      /* 冷启动（摄像头唤醒 + 合并模式出流）约需 15~30 秒；仅在仍是「连接中」时提示，
-         避免覆盖已出现的错误信息 */
+      if (player.mode === "webrtc") startRTC(); else startMSE();
+      /* 冷启动（摄像头唤醒 + 合并模式出流）约需 15~30 秒；仅在仍是「连接中」时提示 */
       setTimeout(() => {
         const el = tile.querySelector(".err");
-        if (!player.stopped && !player.sb && el && el.textContent === "连接中…") {
-          showErr("摄像头唤醒中，首次出画约需 15~30 秒，请稍候…");
-        }
+        if (player.stopped || !el || el.textContent !== "连接中…") return;
+        const pending = player.mode === "webrtc" ? !player.rtcConnected : !player.sb;
+        if (pending) showErr("摄像头唤醒中，首次出画约需 15~30 秒，请稍候…");
       }, 8000);
     };
     ws.onmessage = (ev) => {
       if (player.stopped) return;
-      if (typeof ev.data === "string") {
-        let msg;
-        try { msg = JSON.parse(ev.data); } catch (e) { return; }
-        if (msg && msg.type === "mse" && msg.value) onMime(msg.value);
-        else if (msg && msg.type === "error") {
-          const val = msg.value || "未知";
-          if (/codecs not matched/i.test(val) && /265|hevc|hvc/i.test(val)) {
-            /* 浏览器解不了 H.265：重试无意义，给出明确指引 */
-            showErr("该摄像头输出 H.265 画面，当前浏览器不支持解码。请改用 Edge 浏览器，或为 Chrome 安装 HEVC 支持后刷新。");
-          } else {
-            showErr("流错误：" + val);
-            scheduleReconnect(name, player);
-          }
-        }
-      } else feed(ev.data);
+      if (typeof ev.data !== "string") { if (player.mode === "mse") feed(ev.data); return; }
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch (e) { return; }
+      if (player.mode === "webrtc") onRTCMessage(msg); else onMSEMessage(msg);
     };
     ws.onclose = () => {
       if (player.stopped) return;
@@ -550,7 +664,16 @@ function destroyPlayer(p) {
   p.stopped = true;
   if (p.timer) { clearTimeout(p.timer); p.timer = null; }
   if (p.watchdog) { clearInterval(p.watchdog); p.watchdog = null; }
+  if (p.rtcTimer) { clearTimeout(p.rtcTimer); p.rtcTimer = null; }
   if (p.ws) { try { p.ws.close(); } catch (e) {} p.ws = null; }
+  if (p.pc) {
+    try {
+      p.pc.getSenders().forEach((s) => { if (s.track) s.track.stop(); });
+      p.pc.close();
+    } catch (e) {}
+    p.pc = null;
+  }
+  p.rtcStream = null;
   if (p.ms) { try { if (p.ms.readyState === "open") p.ms.close(); } catch (e) {} p.ms = null; }
   if (p.objUrl) { URL.revokeObjectURL(p.objUrl); p.objUrl = null; }
   p.sb = null; p.buf = null; p.bufLen = 0;
@@ -565,7 +688,7 @@ function stop(name) {
   const tile = $(`.tile[data-name="${name}"]`);
   if (tile) {
     const v = tile.querySelector("video");
-    if (v) { try { v.pause(); } catch (e) {} v.removeAttribute("src"); v.load(); }
+    if (v) { try { v.pause(); } catch (e) {} v.srcObject = null; v.removeAttribute("src"); v.load(); }
     const el = tile.querySelector(".err");
     if (el) el.remove();
   }
