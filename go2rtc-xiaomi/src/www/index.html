@@ -452,7 +452,7 @@ async function play(name) {
   const mode = (Live.MODE === "webrtc" && RTC_SUPPORTED && !Live.RTC_FALLBACK.has(name)) ? "webrtc" : "mse";
   const player = {
     ws: null, ms: null, sb: null, objUrl: null, buf: null, bufLen: 0,
-    stopped: false, timer: null, lastAppend: 0, watchdog: null,
+    stopped: false, timer: null, lastAppend: 0, watchdog: null, hb: null,
     mode, pc: null, rtcStream: null, rtcTimer: null, rtcVideoTimer: null, rtcConnected: false,
   };
   Live.PLAYERS[name] = player;
@@ -661,6 +661,13 @@ async function play(name) {
     ws.onopen = () => {
       if (player.stopped) return;
       showErr("连接中…");
+      /* 信令 WS 心跳：RTC 连通后 WS 长期空闲，经 HA ingress 等代理会被空闲超时回收。
+         定时发一个后端未注册类型的空帧（后端无此 handler，直接忽略），保持代理链路有流量。 */
+      if (player.hb) clearInterval(player.hb);
+      player.hb = setInterval(() => {
+        if (player.stopped || !player.ws || player.ws.readyState !== 1) return;
+        try { player.ws.send(JSON.stringify({ type: "ping" })); } catch (e) {}
+      }, 15000);
       if (player.mode === "webrtc") startRTC(); else startMSE();
       /* 冷启动（摄像头唤醒 + 合并模式出流）约需 15~30 秒；仅在仍是「连接中」时提示 */
       setTimeout(() => {
@@ -706,6 +713,7 @@ function destroyPlayer(p) {
   p.stopped = true;
   if (p.timer) { clearTimeout(p.timer); p.timer = null; }
   if (p.watchdog) { clearInterval(p.watchdog); p.watchdog = null; }
+  if (p.hb) { clearInterval(p.hb); p.hb = null; }
   if (p.rtcTimer) { clearTimeout(p.rtcTimer); p.rtcTimer = null; }
   if (p.rtcVideoTimer) { clearTimeout(p.rtcVideoTimer); p.rtcVideoTimer = null; }
   if (p.ws) { try { p.ws.close(); } catch (e) {} p.ws = null; }
