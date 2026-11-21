@@ -2,7 +2,7 @@
 ## 1.9.15-p48 (2026-11-21)
 
 - 定制面板播放页新增 **WebRTC / MSE 播放方式切换**：每路画面右上角按钮在 RTC ⇄ MSE 间切换，选择记入浏览器本地偏好，新打开的流跟随。
-- 首次默认 **MSE**（已验证可用兜底，不改变现状）；点按钮切到 WebRTC 后本地记住该选择。浏览器不支持 WebRTC 时自动回退 MSE。
+- 默认走 **WebRTC**（低延迟，缓解 MSE 缓冲卡顿）；浏览器不支持 WebRTC 时自动回退 MSE。点按钮切到 MSE 后本地记住该选择。
 - WebRTC 复用 go2rtc 标准 `/api/ws` 协商（`webrtc/offer` → `webrtc/answer` / `webrtc/candidate`）；原 MSE 通道完整保留。
 - RTC 连接失败或 15 秒未建立时给出提示，可手动切回 MSE；不自动回退，避免两条通道来回跳。
 
