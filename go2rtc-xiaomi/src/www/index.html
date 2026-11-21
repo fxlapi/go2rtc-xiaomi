@@ -376,8 +376,7 @@ function renderGrid() {
     /* 标签实时跟随显示名（米家同步后自动更新） */
     const lbl = tile.querySelector(".lbl");
     if (lbl) lbl.textContent = camName(n);
-    const mb = tile.querySelector(".mode");
-    if (mb) mb.textContent = Live.MODE === "webrtc" ? "RTC" : "MSE";
+    refreshModeBtn(n);
     grid.appendChild(tile);
     const v = tile.querySelector("video");
     if (v && Live.PLAYERS[n]) v.play().catch(() => {});
@@ -423,15 +422,25 @@ function wireTile(tile, n) {
   tile.querySelector(".mode").onclick = () => switchMode(n);
 }
 
+/* 按钮文字跟随该流实际播放方式：优先当前 player 的 mode，无播放器时回退全局偏好 */
+function refreshModeBtn(name) {
+  const tile = $(`.tile[data-name="${name}"]`);
+  const mb = tile && tile.querySelector(".mode");
+  if (!mb) return;
+  const p = Live.PLAYERS[name];
+  const cur = p ? p.mode : Live.MODE;
+  mb.textContent = cur === "webrtc" ? "RTC" : "MSE";
+}
+
 /* 切换该流（并同步全局偏好）的播放方式：WebRTC ⇄ MSE，重建播放器 */
 function switchMode(name) {
   const next = Live.MODE === "webrtc" ? "mse" : "webrtc";
   Live.MODE = next;
   saveMode(next);
   if (next === "webrtc") Live.RTC_FALLBACK.delete(name); /* 手动切回 RTC，解除自动回退标记 */
-  $$(".tile .mode").forEach((b) => { b.textContent = next === "webrtc" ? "RTC" : "MSE"; });
   stop(name);
   play(name);
+  $$(".tile", $("#grid")).forEach((t) => refreshModeBtn(t.dataset.name));
 }
 
 async function play(name) {
@@ -465,6 +474,7 @@ async function play(name) {
     destroyPlayer(player);
     delete Live.PLAYERS[name];
     play(name);
+    refreshModeBtn(name);
   };
 
   const feed = (data) => {
@@ -674,6 +684,7 @@ async function play(name) {
     };
     ws.onerror = () => { try { ws.close(); } catch (e) {} };
   };
+  refreshModeBtn(name);
   connect();
 }
 
