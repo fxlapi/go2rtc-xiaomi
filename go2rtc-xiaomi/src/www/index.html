@@ -218,7 +218,7 @@ textarea.yaml{width:100%;height:calc(100vh - 240px);resize:vertical;font:13px/1.
 <script>
 "use strict";
 /* go2rtc (xiaomi) 整合界面 — 打开即播放
- * 画面页：经 WebSocket 直连 go2rtc /api/ws，支持 WebRTC（默认，低延迟）与 MSE（兼容兜底）两种播放方式，瓦片右上角可切换
+ * 画面页：经 WebSocket 直连 go2rtc /api/ws，支持 MSE（默认兜底）与 WebRTC（低延迟）两种播放方式，瓦片右上角可切换
  * 流管理：/api/streams 增删改（写入配置文件）
  * 日志：/api/log 轮询；配置：/api/config 读写 */
 
@@ -236,9 +236,10 @@ const MODE_KEY = "g2panel.live.mode";
 const RTC_SUPPORTED = "RTCPeerConnection" in window;
 const loadMode = () => {
   const m = localStorage.getItem(MODE_KEY);
-  if (m === "mse") return "mse";
   if (m === "webrtc" && RTC_SUPPORTED) return "webrtc";
-  return RTC_SUPPORTED ? "webrtc" : "mse";
+  if (m === "mse") return "mse";
+  /* 首次默认 MSE（已验证可用兜底）；可在画面右上角切 WebRTC，选择会被记住 */
+  return "mse";
 };
 const saveMode = (m) => { try { localStorage.setItem(MODE_KEY, m); } catch (e) {} };
 /* 显示名：优先浏览器本地保存的米家名称（同步或一键添加时写入），否则显示原流名 */
